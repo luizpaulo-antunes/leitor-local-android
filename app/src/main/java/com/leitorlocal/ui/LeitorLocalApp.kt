@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
@@ -41,9 +42,11 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -54,8 +57,14 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInspectionMode
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -345,6 +354,41 @@ private fun ReaderContent(
                         contentAlignment = Alignment.Center,
                     ) {
                         key(state.playback.currentChunkIndex) {
+                            val focusScrollState = rememberScrollState()
+                            var viewportHeightPx by remember { mutableIntStateOf(0) }
+                            var textTopPx by remember { mutableIntStateOf(0) }
+                            var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+                            val activeWordStart = state.playback.currentWordStart
+                            val activeWordEnd = state.playback.currentWordEnd
+                            val maxScroll = focusScrollState.maxValue
+
+                            LaunchedEffect(
+                                activeWordStart,
+                                activeWordEnd,
+                                textTopPx,
+                                textLayout,
+                                viewportHeightPx,
+                                maxScroll,
+                            ) {
+                                val layout = textLayout ?: return@LaunchedEffect
+                                if (
+                                    activeWordEnd <= activeWordStart ||
+                                    activeWordStart !in chunk.text.indices ||
+                                    viewportHeightPx <= 0 ||
+                                    maxScroll <= 0
+                                ) {
+                                    return@LaunchedEffect
+                                }
+                                val wordBox = layout.getBoundingBox(activeWordStart)
+                                val target = (
+                                    textTopPx + wordBox.center.y - viewportHeightPx * 0.48f
+                                ).roundToInt().coerceIn(0, maxScroll)
+                                val distance = target - focusScrollState.value
+                                if (kotlin.math.abs(distance) > 8) {
+                                    focusScrollState.animateScrollBy(distance.toFloat())
+                                }
+                            }
+
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -354,57 +398,87 @@ private fun ReaderContent(
                                 ),
                                 shape = RoundedCornerShape(18.dp),
                             ) {
-                                Column(
+                                Box(
                                     Modifier
-                                        .padding(horizontal = 20.dp, vertical = 18.dp)
-                                        .verticalScroll(rememberScrollState()),
+                                        .fillMaxSize()
+                                        .onSizeChanged { viewportHeightPx = it.height },
                                 ) {
-                                    Text(
-                                        text = if (state.playback.status == PlaybackStatus.PREPARING) {
-                                            if (chunk.figure != null) {
-                                                "Preparando descrição da figura…"
+                                    Column(
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .verticalScroll(focusScrollState)
+                                            .padding(horizontal = 20.dp, vertical = 18.dp),
+                                    ) {
+                                        Text(
+                                            text = if (state.playback.status == PlaybackStatus.PREPARING) {
+                                                if (chunk.figure != null) {
+                                                    "Preparando descrição da figura…"
+                                                } else {
+                                                    "Preparando voz neural…"
+                                                }
                                             } else {
-                                                "Preparando voz neural…"
-                                            }
-                                        } else {
-                                            if (chunk.figure != null) "Figura · lendo agora" else "Lendo agora"
-                                        },
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary,
-                                    )
-                                    Spacer(Modifier.height(6.dp))
-                                    if (focusedBitmap != null && chunk.figure != null) {
-                                        Image(
-                                            bitmap = focusedBitmap.asImageBitmap(),
-                                            contentDescription = chunk.figure.caption.ifBlank {
-                                                chunk.figure.alternativeText.ifBlank { "Figura do livro" }
+                                                if (chunk.figure != null) "Figura · lendo agora" else "Lendo agora"
                                             },
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .aspectRatio(
-                                                    (focusedBitmap.width.toFloat() / focusedBitmap.height)
-                                                        .coerceIn(0.55f, 2.4f),
-                                                )
-                                                .clip(RoundedCornerShape(12.dp)),
-                                            contentScale = ContentScale.Fit,
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.primary,
                                         )
-                                        if (chunk.figure.caption.isNotBlank()) {
-                                            Spacer(Modifier.height(10.dp))
-                                            Text(
-                                                text = chunk.figure.caption,
-                                                style = MaterialTheme.typography.labelMedium,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                fontFamily = FontFamily.Serif,
+                                        Spacer(Modifier.height(6.dp))
+                                        if (focusedBitmap != null && chunk.figure != null) {
+                                            Image(
+                                                bitmap = focusedBitmap.asImageBitmap(),
+                                                contentDescription = chunk.figure.caption.ifBlank {
+                                                    chunk.figure.alternativeText.ifBlank { "Figura do livro" }
+                                                },
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .aspectRatio(
+                                                        (focusedBitmap.width.toFloat() / focusedBitmap.height)
+                                                            .coerceIn(0.55f, 2.4f),
+                                                    )
+                                                    .clip(RoundedCornerShape(12.dp)),
+                                                contentScale = ContentScale.Fit,
                                             )
+                                            if (chunk.figure.caption.isNotBlank()) {
+                                                Spacer(Modifier.height(10.dp))
+                                                Text(
+                                                    text = chunk.figure.caption,
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    fontFamily = FontFamily.Serif,
+                                                )
+                                            }
+                                            Spacer(Modifier.height(12.dp))
                                         }
-                                        Spacer(Modifier.height(12.dp))
+                                        val highlightColor = MaterialTheme.colorScheme.primary
+                                        val highlightedText = buildAnnotatedString {
+                                            append(chunk.text)
+                                            if (
+                                                activeWordEnd > activeWordStart &&
+                                                activeWordStart >= 0 &&
+                                                activeWordEnd <= chunk.text.length
+                                            ) {
+                                                addStyle(
+                                                    SpanStyle(
+                                                        color = highlightColor,
+                                                        background = highlightColor.copy(alpha = 0.18f),
+                                                    ),
+                                                    activeWordStart,
+                                                    activeWordEnd,
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = highlightedText,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontFamily = FontFamily.Serif,
+                                            lineHeight = MaterialTheme.typography.titleMedium.lineHeight * 1.15f,
+                                            onTextLayout = { textLayout = it },
+                                            modifier = Modifier.onGloballyPositioned { coordinates ->
+                                                val contentTop = coordinates.positionInParent().y.roundToInt()
+                                                if (textTopPx != contentTop) textTopPx = contentTop
+                                            },
+                                        )
                                     }
-                                    Text(
-                                        text = chunk.text,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontFamily = FontFamily.Serif,
-                                        lineHeight = MaterialTheme.typography.titleMedium.lineHeight * 1.15f,
-                                    )
                                 }
                             }
                         }
@@ -433,9 +507,15 @@ private fun ReaderContent(
             )
         }
 
-        if (book.pagesWithoutText > 0) {
+        if (state.isOcrRunning) {
             Text(
-                text = "${book.pagesWithoutText} página(s) sem texto serão ignoradas até adicionarmos OCR.",
+                text = state.ocrMessage.ifBlank { "OCR offline preparando páginas escaneadas…" },
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        } else if (book.pagesWithoutText > 0) {
+            Text(
+                text = "${book.pagesWithoutText} página(s) sem texto legível foram ignoradas.",
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.secondary,
             )

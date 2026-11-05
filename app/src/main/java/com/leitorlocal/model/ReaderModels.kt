@@ -51,6 +51,8 @@ enum class PlaybackStatus {
 data class PlaybackState(
     val status: PlaybackStatus = PlaybackStatus.STOPPED,
     val currentChunkIndex: Int = 0,
+    val currentWordStart: Int = 0,
+    val currentWordEnd: Int = 0,
     val error: String? = null,
 )
 
@@ -75,6 +77,8 @@ data class ReaderUiState(
     val speechRate: Float = 1f,
     val library: List<LibraryBook> = emptyList(),
     val showingLibrary: Boolean = true,
+    val isOcrRunning: Boolean = false,
+    val ocrMessage: String = "",
     val error: String? = null,
 ) {
     val currentChunk: SpeechChunk?

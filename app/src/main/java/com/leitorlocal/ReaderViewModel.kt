@@ -8,6 +8,7 @@ import androidx.core.net.toUri
 import com.leitorlocal.data.ReaderPreferences
 import com.leitorlocal.data.BookCoverStore
 import com.leitorlocal.model.PlaybackStatus
+import com.leitorlocal.model.BookContent
 import com.leitorlocal.model.ReaderUiState
 import com.leitorlocal.model.LibraryBook
 import com.leitorlocal.pdf.PdfBookParser
@@ -18,6 +19,7 @@ import com.leitorlocal.speech.TtsVoiceCatalog
 import com.leitorlocal.speech.EMBEDDED_NEURAL_VOICES
 import com.leitorlocal.speech.embeddedNeuralVoice
 import com.leitorlocal.model.VoiceOption
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +45,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private var loadJob: Job? = null
     private var renderJob: Job? = null
+    private var ocrJob: Job? = null
     private var lastRenderedPage = -1
 
     init {
@@ -144,6 +147,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         startIndex: Int,
     ) {
         loadJob?.cancel()
+        ocrJob?.cancel()
         if (ReadingSession.state.value.status != PlaybackStatus.STOPPED) {
             ReadingService.stop(getApplication())
         }
@@ -155,6 +159,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 book = null,
                 pageBitmap = null,
                 showingLibrary = false,
+                isOcrRunning = false,
+                ocrMessage = "",
                 error = null,
             )
         }
@@ -193,6 +199,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 renderPage(book.uri, book.chunks[restoredIndex].pageIndex)
                 ReadingService.prepareNeural(getApplication())
+                startProgressiveOcr(
+                    initialBook = book,
+                    priorityPage = book.chunks[restoredIndex].pageIndex,
+                )
             }.onFailure { failure ->
                 mutableUiState.update {
                     it.copy(
@@ -204,6 +214,94 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
             }
+        }
+    }
+
+    private fun startProgressiveOcr(initialBook: BookContent, priorityPage: Int) {
+        ocrJob?.cancel()
+        if (initialBook.pagesWithoutText <= 0 || initialBook.pageCount <= 0) {
+            mutableUiState.update { it.copy(isOcrRunning = false, ocrMessage = "") }
+            return
+        }
+
+        val bookUri = initialBook.uri
+        val firstPage = priorityPage.coerceIn(0, initialBook.pageCount - 1)
+        ocrJob = viewModelScope.launch {
+            var workingBook = initialBook
+            mutableUiState.update {
+                it.copy(
+                    isOcrRunning = true,
+                    ocrMessage = "OCR offline preparando as próximas páginas…",
+                )
+            }
+            try {
+                ocrWindowStarts(
+                    pageCount = initialBook.pageCount,
+                    priorityPage = firstPage,
+                ).forEach { windowStart ->
+                    if (mutableUiState.value.book?.uri != bookUri) return@launch
+                    val result = parser.enrichWithOcr(
+                        book = workingBook,
+                        startPage = windowStart,
+                        pagesAhead = OCR_PAGES_AHEAD,
+                    ) { progress ->
+                        mutableUiState.update { state ->
+                            if (state.book?.uri != bookUri) state else state.copy(
+                                ocrMessage = "OCR offline · página ${progress.pageIndex + 1} " +
+                                    "de ${initialBook.pageCount}",
+                            )
+                        }
+                    }
+                    if (result.book != workingBook) {
+                        workingBook = result.book
+                        ReadingSession.replaceChunks(workingBook.chunks)
+                        val currentIndex = ReadingSession.state.value.currentChunkIndex
+                        preferences.saveBook(
+                            workingBook.uri,
+                            workingBook.title,
+                            workingBook.chunks.size,
+                            workingBook.pageCount,
+                        )
+                        preferences.savePosition(currentIndex)
+                        mutableUiState.update { state ->
+                            if (state.book?.uri != bookUri) state else state.copy(
+                                book = workingBook,
+                                playback = ReadingSession.state.value,
+                                library = preferences.library(),
+                            )
+                        }
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                mutableUiState.update { state ->
+                    if (state.book?.uri != bookUri) state else state.copy(
+                        ocrMessage = "O OCR offline continuará quando este livro for aberto novamente.",
+                    )
+                }
+            } finally {
+                mutableUiState.update { state ->
+                    if (state.book?.uri != bookUri) state else state.copy(
+                        isOcrRunning = false,
+                        ocrMessage = "",
+                    )
+                }
+            }
+        }
+    }
+
+    private fun ocrWindowStarts(pageCount: Int, priorityPage: Int): List<Int> = buildList {
+        val windowSize = OCR_PAGES_AHEAD + 1
+        var page = priorityPage
+        while (page < pageCount) {
+            add(page)
+            page += windowSize
+        }
+        page = 0
+        while (page < priorityPage) {
+            add(page)
+            page += windowSize
         }
     }
 
@@ -248,6 +346,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     override fun onCleared() {
+        ocrJob?.cancel()
+        parser.close()
         voiceCatalog.close()
+    }
+
+    companion object {
+        private const val OCR_PAGES_AHEAD = 3
     }
 }

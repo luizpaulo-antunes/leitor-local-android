@@ -14,6 +14,8 @@ import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import com.leitorlocal.model.SpeechChunk
+import java.util.ArrayDeque
 
 class EmbeddedNeuralTts(private val context: Context) {
     private var engine: OfflineTts? = null
@@ -21,8 +23,11 @@ class EmbeddedNeuralTts(private val context: Context) {
     private val speechEnhancer = NeuralSpeechEnhancer(context)
 
     fun generate(text: String, speed: Float, voice: EmbeddedNeuralVoice): NeuralAudio {
+        val narrationText = NeuralNarrationText.prepare(text)
+        check(narrationText.isNotEmpty()) { "O trecho não contém texto narrável." }
+        val profile = NeuralVoiceProfiles.forVoice(voice)
         val tts = engineFor(voice)
-        val phonemes = piperPhonemizeText(text, tts.lang().ifEmpty { "pt-br" })
+        val phonemes = piperPhonemizeText(narrationText, tts.lang().ifEmpty { "pt-br" })
             ?: error("O fonemizador não conseguiu preparar o texto em português.")
         val codepoints = try {
             Array(phonemes.numSentences) { index -> phonemes.getPhonemes(index) }
@@ -34,11 +39,17 @@ class EmbeddedNeuralTts(private val context: Context) {
             config = GenerationConfig(
                 sid = 0,
                 speed = speed.coerceIn(0.6f, 1.6f),
-                silenceScale = 0.22f,
+                silenceScale = profile.silenceScale,
                 phonemeCodepoints = codepoints,
             ),
         )
-        return speechEnhancer.enhance(generated.samples, generated.sampleRate)
+        return speechEnhancer.enhance(
+            samples = generated.samples,
+            sampleRate = generated.sampleRate,
+            profile = profile,
+            narrationText = narrationText,
+            speed = speed,
+        )
     }
 
     fun release() {
@@ -61,6 +72,7 @@ class EmbeddedNeuralTts(private val context: Context) {
 
     private fun createEngine(voice: EmbeddedNeuralVoice): OfflineTts {
         piperPhonemizeInitialize(context.applicationContext)
+        val profile = NeuralVoiceProfiles.forVoice(voice)
         val config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(
                 vits = OfflineTtsVitsModelConfig(
@@ -76,22 +88,47 @@ class EmbeddedNeuralTts(private val context: Context) {
                 provider = "cpu",
             ),
             maxNumSentences = 1,
-            silenceScale = 0.22f,
+            silenceScale = profile.silenceScale,
         )
         return OfflineTts(assetManager = context.assets, config = config)
     }
 }
 
 class NeuralAudioPlayer {
+    private data class PlaybackSegment(
+        val chunk: SpeechChunk,
+        val startFrame: Int,
+        val endFrame: Int,
+        val words: List<KaraokeWord>,
+    )
+
     private val mainHandler = Handler(Looper.getMainLooper())
     private var track: AudioTrack? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var framesWritten = 0
+    private val segments = ArrayDeque<PlaybackSegment>()
     private var completion: (() -> Unit)? = null
     private var error: ((Throwable) -> Unit)? = null
+    private var progress: ((chunk: SpeechChunk, wordStart: Int, wordEnd: Int) -> Unit)? = null
+    private var lastProgressChunk: SpeechChunk? = null
+    private var lastProgressWordStart = -1
+
+    private val progressPoll = object : Runnable {
+        override fun run() {
+            dispatchPlaybackProgress()
+            synchronized(this@NeuralAudioPlayer) {
+                if (track != null) mainHandler.postDelayed(this, PROGRESS_INTERVAL_MILLIS)
+            }
+        }
+    }
 
     @Synchronized
-    fun start(sampleRate: Int, onCompletion: () -> Unit, onError: (Throwable) -> Unit) {
+    fun start(
+        sampleRate: Int,
+        onCompletion: () -> Unit,
+        onError: (Throwable) -> Unit,
+        onProgress: (chunk: SpeechChunk, wordStart: Int, wordEnd: Int) -> Unit,
+    ) {
         stop()
         runCatching {
             val minimumBuffer = AudioTrack.getMinBufferSize(
@@ -137,17 +174,33 @@ class NeuralAudioPlayer {
                 },
             )
             framesWritten = 0
+            segments.clear()
             completion = onCompletion
             error = onError
+            progress = onProgress
+            lastProgressChunk = null
+            lastProgressWordStart = -1
             newTrack.play()
+            mainHandler.post(progressPoll)
         }.onFailure { failure ->
             stop()
             onError(failure)
         }
     }
 
-    fun write(samples: FloatArray): Boolean {
+    fun write(samples: FloatArray, chunk: SpeechChunk): Boolean {
         if (samples.isEmpty()) return true
+        synchronized(this) {
+            val startFrame = framesWritten
+            segments.addLast(
+                PlaybackSegment(
+                    chunk = chunk,
+                    startFrame = startFrame,
+                    endFrame = startFrame + samples.size,
+                    words = KaraokeTiming.words(chunk.text),
+                ),
+            )
+        }
         var offset = 0
         while (offset < samples.size) {
             val current = synchronized(this) { track } ?: return false
@@ -182,6 +235,28 @@ class NeuralAudioPlayer {
         return true
     }
 
+    private fun dispatchPlaybackProgress() {
+        val event = synchronized(this) {
+            val current = track ?: return
+            if (segments.isEmpty()) return
+            val playedFrame = current.playbackHeadPosition
+            while (segments.size > 1 && playedFrame >= segments.first.endFrame) {
+                segments.removeFirst()
+            }
+            val segment = segments.first
+            if (playedFrame < segment.startFrame) return
+            val segmentFrames = (segment.endFrame - segment.startFrame).coerceAtLeast(1)
+            val segmentProgress =
+                (playedFrame - segment.startFrame).toFloat() / segmentFrames.toFloat()
+            val word = KaraokeTiming.wordAtProgress(segment.words, segmentProgress) ?: return
+            if (segment.chunk === lastProgressChunk && word.start == lastProgressWordStart) return
+            lastProgressChunk = segment.chunk
+            lastProgressWordStart = word.start
+            Triple(segment.chunk, word.start, word.end)
+        }
+        progress?.invoke(event.first, event.second, event.third)
+    }
+
     @Synchronized
     fun finish() {
         val current = track ?: return
@@ -214,11 +289,16 @@ class NeuralAudioPlayer {
 
     @Synchronized
     fun stop() {
+        mainHandler.removeCallbacks(progressPoll)
         val current = track
         track = null
         completion = null
         error = null
+        progress = null
         framesWritten = 0
+        segments.clear()
+        lastProgressChunk = null
+        lastProgressWordStart = -1
         loudnessEnhancer?.let { enhancer ->
             runCatching { enhancer.enabled = false }
             runCatching(enhancer::release)
@@ -234,6 +314,7 @@ class NeuralAudioPlayer {
 
     companion object {
         private const val PLAYBACK_BLOCK_SAMPLES = 4096
+        private const val PROGRESS_INTERVAL_MILLIS = 60L
         // 20 * log10(1.20) = 1.58 dB. LoudnessEnhancer receives millibels.
         private const val NEURAL_VOLUME_BOOST_MILLIBELS = 158
     }

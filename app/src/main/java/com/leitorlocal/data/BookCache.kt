@@ -14,6 +14,7 @@ import java.security.MessageDigest
 class BookCache(private val context: Context) {
     private val directory = File(context.filesDir, "processed_books_v4").apply { mkdirs() }
 
+    @Synchronized
     fun load(uri: Uri, title: String): BookContent? = runCatching {
         val file = cacheFile(uri)
         if (!file.isFile) return null
@@ -51,6 +52,7 @@ class BookCache(private val context: Context) {
         )
     }.getOrNull()
 
+    @Synchronized
     fun save(book: BookContent) {
         runCatching {
             val uri = book.uri.toUri()

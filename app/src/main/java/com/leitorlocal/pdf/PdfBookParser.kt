@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 
 class PdfBookParser(private val context: Context) {
     private val cache = BookCache(context.applicationContext)
+    private val progressiveOcr = ProgressivePdfOcr(context.applicationContext)
 
     init {
         PDFBoxResourceLoader.init(context.applicationContext)
@@ -32,7 +33,7 @@ class PdfBookParser(private val context: Context) {
         val input = context.contentResolver.openInputStream(uri)
             ?: error("Não foi possível abrir o PDF.")
 
-        input.use { stream ->
+        val extractedBook = input.use { stream ->
             PDDocument.load(stream).use { document ->
                 val totalPages = document.numberOfPages
                 val chunks = mutableListOf<SpeechChunk>()
@@ -72,22 +73,71 @@ class PdfBookParser(private val context: Context) {
                     }
                 }
 
-                if (chunks.isEmpty()) {
-                    error(
-                        "Este PDF não contém texto selecionável. " +
-                            "Ele provavelmente é escaneado e precisará do módulo de OCR.",
-                    )
-                }
-
                 BookContent(
                     uri = uri.toString(),
                     title = title,
                     pageCount = totalPages,
                     chunks = chunks,
                     pagesWithoutText = pagesWithoutText,
-                ).also(cache::save)
+                )
             }
         }
+
+        val readyBook = if (extractedBook.chunks.isEmpty()) {
+            bootstrapScannedBook(extractedBook, onProgress)
+        } else {
+            extractedBook
+        }
+        if (readyBook.chunks.isEmpty()) {
+            error(
+                "Este PDF parece ser escaneado, mas o OCR offline não encontrou " +
+                    "texto legível nas primeiras páginas.",
+            )
+        }
+        cache.save(readyBook)
+        readyBook
+    }
+
+    /**
+     * Recognizes missing pages around [startPage], merges them in reading order and persists
+     * the updated processed-book cache. Cached empty pages are returned without rerunning ML Kit.
+     */
+    suspend fun enrichWithOcr(
+        book: BookContent,
+        startPage: Int,
+        pagesAhead: Int = ProgressivePdfOcr.DEFAULT_PAGES_AHEAD,
+        onProgress: (PageOcrProgress) -> Unit = {},
+    ): ProgressiveOcrResult = withContext(Dispatchers.IO) {
+        val result = progressiveOcr.enrich(book, startPage, pagesAhead, onProgress)
+        if (result.recognizedPages.isNotEmpty()) cache.save(result.book)
+        result
+    }
+
+    fun close() {
+        progressiveOcr.close()
+    }
+
+    private suspend fun bootstrapScannedBook(
+        initial: BookContent,
+        onProgress: (message: String) -> Unit,
+    ): BookContent {
+        var book = initial
+        var startPage = 0
+        val pageLimit = minOf(initial.pageCount, MAX_BOOTSTRAP_OCR_PAGES)
+        while (book.chunks.isEmpty() && startPage < pageLimit) {
+            val result = progressiveOcr.enrich(
+                book = book,
+                startPage = startPage,
+                pagesAhead = BOOTSTRAP_BATCH_SIZE - 1,
+            ) { progress ->
+                onProgress(
+                    "OCR offline da página ${progress.pageIndex + 1} de ${initial.pageCount}…",
+                )
+            }
+            book = result.book
+            startPage += BOOTSTRAP_BATCH_SIZE
+        }
+        return book
     }
 
     private fun buildPageChunks(
@@ -133,5 +183,10 @@ class PdfBookParser(private val context: Context) {
         }
 
         if (cursor < cleanText.length) addText(cleanText.substring(cursor))
+    }
+
+    companion object {
+        private const val BOOTSTRAP_BATCH_SIZE = 3
+        private const val MAX_BOOTSTRAP_OCR_PAGES = 12
     }
 }

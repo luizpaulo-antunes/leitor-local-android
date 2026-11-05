@@ -11,6 +11,7 @@ import android.media.AudioAttributes
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.app.NotificationCompat
@@ -19,6 +20,7 @@ import com.leitorlocal.MainActivity
 import com.leitorlocal.R
 import com.leitorlocal.data.ReaderPreferences
 import com.leitorlocal.model.PlaybackStatus
+import com.leitorlocal.model.SpeechChunk
 import java.util.Locale
 import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
@@ -26,7 +28,7 @@ import java.util.concurrent.TimeUnit
 
 private sealed interface NeuralQueueItem {
     data class Audio(
-        val chunkIndex: Int,
+        val chunk: SpeechChunk,
         val samples: FloatArray,
         val sampleRate: Int,
     ) : NeuralQueueItem
@@ -49,6 +51,10 @@ class ReadingService : Service() {
     @Volatile private var neuralRequestId = 0L
     @Volatile private var neuralQueue: ArrayBlockingQueue<NeuralQueueItem>? = null
     @Volatile private var prewarmRequestId = 0L
+    private var ttsKaraokeGeneration = 0L
+    private var ttsFallbackRunnable: Runnable? = null
+    private var activeTtsChunk: SpeechChunk? = null
+    @Volatile private var hasNativeRangeCallbacks = false
 
     override fun onCreate() {
         super.onCreate()
@@ -102,6 +108,7 @@ class ReadingService : Service() {
 
     private fun reloadEngine() {
         playWhenReady = false
+        cancelTtsKaraoke()
         cancelNeuralPlayback()
         isTtsReady = false
         tts?.stop()
@@ -122,6 +129,7 @@ class ReadingService : Service() {
 
     private fun pause() {
         playWhenReady = false
+        cancelTtsKaraoke()
         tts?.stop()
         cancelNeuralPlayback()
         ReadingSession.setStatus(PlaybackStatus.PAUSED)
@@ -133,6 +141,7 @@ class ReadingService : Service() {
             PlaybackStatus.PLAYING,
             PlaybackStatus.PREPARING,
         ) || playWhenReady
+        cancelTtsKaraoke()
         tts?.stop()
         cancelNeuralPlayback()
         ReadingSession.moveBy(offset)
@@ -153,6 +162,9 @@ class ReadingService : Service() {
         }
         val engine = tts ?: return
         val chunk = ReadingSession.currentChunk() ?: return
+        activeTtsChunk = chunk
+        cancelTtsKaraoke()
+        ReadingSession.clearWordRange()
         applySettings()
         ReadingSession.setStatus(PlaybackStatus.PLAYING)
         updateNotification(true)
@@ -160,7 +172,7 @@ class ReadingService : Service() {
             chunk.text,
             TextToSpeech.QUEUE_FLUSH,
             null,
-            "book-${ReadingSession.state.value.currentChunkIndex}",
+            "$UTTERANCE_PREFIX${ReadingSession.state.value.currentChunkIndex}",
         )
     }
 
@@ -201,12 +213,12 @@ class ReadingService : Service() {
                     if (!offerNeuralItem(
                             requestId,
                             queue,
-                            NeuralQueueItem.Audio(index, audio.samples, audio.sampleRate),
+                            NeuralQueueItem.Audio(chunk, audio.samples, audio.sampleRate),
                         )
                     ) {
                         return@execute
                     }
-                    index += 1
+                    index = (ReadingSession.indexOfChunk(chunk) ?: index) + 1
                 }
                 if (isNeuralRequestActive(requestId)) {
                     offerNeuralItem(requestId, queue, NeuralQueueItem.End)
@@ -312,7 +324,18 @@ class ReadingService : Service() {
                     handleTtsError(neuralErrorMessage("reproduzir", failure))
                 }
             },
+            onProgress = { chunk, wordStart, wordEnd ->
+                if (!isNeuralRequestActive(requestId)) return@start
+                val chunkIndex = ReadingSession.indexOfChunk(chunk) ?: return@start
+                if (ReadingSession.state.value.currentChunkIndex != chunkIndex) {
+                    ReadingSession.setIndex(chunkIndex)
+                    persistPosition()
+                }
+                ReadingSession.setStatus(PlaybackStatus.PLAYING)
+                ReadingSession.setWordRange(chunkIndex, wordStart, wordEnd)
+            },
         )
+        ReadingSession.setStatus(PlaybackStatus.PLAYING)
 
         buffered.forEach { audio ->
             if (!playNeuralItem(requestId, audio, sampleRate)) return
@@ -342,10 +365,8 @@ class ReadingService : Service() {
     ): Boolean {
         if (!isNeuralRequestActive(requestId)) return false
         check(item.sampleRate == expectedSampleRate) { "A taxa do áudio neural mudou durante a leitura." }
-        ReadingSession.setIndex(item.chunkIndex)
-        ReadingSession.setStatus(PlaybackStatus.PLAYING)
-        persistPosition()
-        return neuralPlayer.write(item.samples) && isNeuralRequestActive(requestId)
+        return neuralPlayer.write(item.samples, item.chunk) &&
+            isNeuralRequestActive(requestId)
     }
 
     private fun handleNeuralTerminal(requestId: Long, item: NeuralQueueItem) {
@@ -413,11 +434,38 @@ class ReadingService : Service() {
 
     private val listener = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) {
-            ReadingSession.setStatus(PlaybackStatus.PLAYING)
+            mainHandler.post {
+                val chunkIndex = utteranceChunkIndex(utteranceId) ?: return@post
+                if (!playWhenReady || ReadingSession.state.value.currentChunkIndex != chunkIndex) return@post
+                ReadingSession.setStatus(PlaybackStatus.PLAYING)
+                startTtsKaraokeFallback(chunkIndex)
+            }
+        }
+
+        override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
+            mainHandler.post {
+                val chunkIndex = utteranceChunkIndex(utteranceId) ?: return@post
+                if (!playWhenReady || ReadingSession.state.value.currentChunkIndex != chunkIndex) return@post
+                hasNativeRangeCallbacks = true
+                ttsFallbackRunnable?.let(mainHandler::removeCallbacks)
+                ReadingSession.setWordRange(chunkIndex, start, end)
+            }
         }
 
         override fun onDone(utteranceId: String?) {
-            mainHandler.post(::handleChunkDone)
+            mainHandler.post {
+                val chunkIndex = utteranceChunkIndex(utteranceId) ?: return@post
+                if (ReadingSession.state.value.currentChunkIndex != chunkIndex) return@post
+                cancelTtsKaraoke()
+                handleChunkDone()
+            }
+        }
+
+        override fun onStop(utteranceId: String?, interrupted: Boolean) {
+            mainHandler.post {
+                val chunkIndex = utteranceChunkIndex(utteranceId) ?: return@post
+                if (ReadingSession.state.value.currentChunkIndex == chunkIndex) cancelTtsKaraoke()
+            }
         }
 
         @Deprecated("Deprecated in Java")
@@ -429,6 +477,51 @@ class ReadingService : Service() {
             handleTtsError()
         }
     }
+
+    private fun startTtsKaraokeFallback(chunkIndex: Int) {
+        cancelTtsKaraoke()
+        val text = ReadingSession.chunkAt(chunkIndex)?.text ?: return
+        val words = KaraokeTiming.words(text)
+        if (words.isEmpty()) return
+        hasNativeRangeCallbacks = false
+        val generation = ttsKaraokeGeneration
+        val startedAt = SystemClock.elapsedRealtime()
+        val duration = KaraokeTiming.estimatedDurationMillis(text, ReadingSession.speechRate)
+        ReadingSession.setWordRange(chunkIndex, words.first().start, words.first().end)
+        val update = object : Runnable {
+            override fun run() {
+                if (
+                    generation != ttsKaraokeGeneration ||
+                    hasNativeRangeCallbacks ||
+                    !playWhenReady ||
+                    ReadingSession.state.value.currentChunkIndex != chunkIndex
+                ) {
+                    return
+                }
+                val elapsed = SystemClock.elapsedRealtime() - startedAt
+                val word = KaraokeTiming.wordAtProgress(words, elapsed.toFloat() / duration.toFloat())
+                if (word != null) ReadingSession.setWordRange(chunkIndex, word.start, word.end)
+                if (elapsed < duration) mainHandler.postDelayed(this, KARAOKE_INTERVAL_MILLIS)
+            }
+        }
+        ttsFallbackRunnable = update
+        mainHandler.postDelayed(update, KARAOKE_INTERVAL_MILLIS)
+    }
+
+    private fun cancelTtsKaraoke() {
+        ttsKaraokeGeneration += 1
+        ttsFallbackRunnable?.let(mainHandler::removeCallbacks)
+        ttsFallbackRunnable = null
+        hasNativeRangeCallbacks = false
+    }
+
+    private fun utteranceChunkIndex(utteranceId: String?): Int? =
+        utteranceId
+            ?.takeIf { it.startsWith(UTTERANCE_PREFIX) }
+            ?.let {
+                activeTtsChunk?.let(ReadingSession::indexOfChunk)
+                    ?: it.removePrefix(UTTERANCE_PREFIX).toIntOrNull()
+            }
 
     private fun handleChunkDone() {
         if (!playWhenReady) return
@@ -447,6 +540,7 @@ class ReadingService : Service() {
     private fun handleTtsError(message: String = "A voz selecionada não conseguiu ler este trecho. Tente outra voz.") {
         mainHandler.post {
             playWhenReady = false
+            cancelTtsKaraoke()
             cancelNeuralPlayback()
             ReadingSession.setStatus(
                 PlaybackStatus.ERROR,
@@ -459,6 +553,7 @@ class ReadingService : Service() {
     private fun stopReading() {
         playWhenReady = false
         prewarmRequestId += 1
+        cancelTtsKaraoke()
         tts?.stop()
         cancelNeuralPlayback()
         ReadingSession.setStatus(PlaybackStatus.STOPPED)
@@ -543,6 +638,7 @@ class ReadingService : Service() {
 
     override fun onDestroy() {
         prewarmRequestId += 1
+        cancelTtsKaraoke()
         cancelNeuralPlayback()
         tts?.stop()
         tts?.shutdown()
@@ -561,6 +657,8 @@ class ReadingService : Service() {
         private const val NEURAL_PREWARM_PAGES = 3
         private const val NEURAL_PREWARM_MAX_CHUNKS = 18
         private const val NEURAL_QUEUE_WAIT_MS = 200L
+        private const val KARAOKE_INTERVAL_MILLIS = 70L
+        private const val UTTERANCE_PREFIX = "book-"
         private const val ACTION_PLAY = "com.leitorlocal.PLAY"
         private const val ACTION_PREPARE_NEURAL = "com.leitorlocal.PREPARE_NEURAL"
         private const val ACTION_PAUSE = "com.leitorlocal.PAUSE"

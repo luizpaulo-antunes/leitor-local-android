@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.8.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.9.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.8.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.9.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -39,10 +39,12 @@ estão disponíveis neste repositório.
 - Identifica e prioriza vozes em português de alta qualidade instaladas no aparelho.
 - Mantém um cache local do texto processado para reabrir livros sem reler todas as páginas.
 - Exibe o trecho atual em modo de foco, sobre a página suavemente desfocada.
+- Destaca e acompanha automaticamente cada palavra durante a narração.
 - Inclui as vozes neurais brasileiras Miro e Dii, executadas offline pelo Sherpa-ONNX.
-- Remove ruído das vozes neurais com um segundo modelo executado no aparelho.
+- Aplica um perfil próprio a cada voz: Miro recebe redução de ruído e Dii preserva o áudio original em 22,05 kHz.
 - Reforça o volume das vozes neurais em 20%, com limitador contra saturação.
 - Prepara e guarda localmente as próximas páginas em áudio tratado para iniciar e continuar a leitura com menos espera.
+- Reconhece progressivamente páginas escaneadas com OCR offline e mantém o resultado em cache.
 - Identifica figuras acompanhadas por legenda ou marcação de acessibilidade no PDF.
 - Extrai e mostra a figura em destaque durante a narração.
 - Combina legenda, descrição acessível e OCR offline para narrar o conteúdo visual sem enviar o livro para a internet.
@@ -71,7 +73,7 @@ Android.
 
 Ao abrir um livro com uma voz neural selecionada, o aplicativo começa a preparar em
 segundo plano até três páginas a partir da posição atual. Cada trecho é
-sintetizado, passa pela redução neural de ruído e fica em um cache local. Se
+sintetizado, recebe o tratamento específico da voz e fica em um cache local. Se
 você tocar em reproduzir antes do fim, a leitura recebe prioridade e o cache
 continua sendo abastecido adiante durante a reprodução. O cache de áudio é
 limitado a 192 MB e o conteúdo do livro não é enviado para a internet.
@@ -85,8 +87,16 @@ O processamento também ignora cabeçalhos, rodapés e números marcados pelo PD
 como artefatos de paginação. Para documentos sem essa marcação, há um filtro de
 margens que reconhece títulos com letras muito espaçadas e números anexados.
 
-O OCR desta versão é aplicado às figuras detectadas. PDFs inteiros formados
-apenas por páginas escaneadas ainda não têm extração completa do texto.
+O mesmo OCR também é aplicado às páginas que não possuem texto selecionável.
+O aplicativo prioriza a página atual e as três seguintes e continua preparando
+o restante do livro em segundo plano. O resultado de cada página, inclusive de
+páginas realmente vazias, fica em cache e não precisa ser processado novamente.
+Livros totalmente escaneados recebem um processamento inicial curto para que a
+leitura possa começar antes do término do livro inteiro.
+
+Textos impressos em alfabeto latino produzem os melhores resultados. Manuscritos,
+diagramas complexos e páginas com várias colunas ainda podem exigir correção na
+ordem de leitura.
 
 ## Para desenvolvedores
 
