@@ -2,18 +2,18 @@
 
 Leitor pessoal de livros em PDF para Android. O aplicativo abre um PDF, extrai o
 texto no próprio aparelho, mostra a página original e usa uma voz `pt-BR`
-instalada no Android para ler o conteúdo. Não há conta, servidor, analytics ou
-API paga.
+instalada no Android ou uma das vozes neurais incluídas para ler o conteúdo.
+Não há conta, servidor, analytics ou API paga.
 
 ## Baixar e instalar
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.7.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.8.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.7.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.8.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -39,8 +39,9 @@ estão disponíveis neste repositório.
 - Identifica e prioriza vozes em português de alta qualidade instaladas no aparelho.
 - Mantém um cache local do texto processado para reabrir livros sem reler todas as páginas.
 - Exibe o trecho atual em modo de foco, sobre a página suavemente desfocada.
-- Inclui a voz neural brasileira Miro, executada offline pelo Sherpa-ONNX.
-- Remove ruído da voz Miro com um segundo modelo neural executado no aparelho.
+- Inclui as vozes neurais brasileiras Miro e Dii, executadas offline pelo Sherpa-ONNX.
+- Remove ruído das vozes neurais com um segundo modelo executado no aparelho.
+- Reforça o volume das vozes neurais em 20%, com limitador contra saturação.
 - Prepara e guarda localmente as próximas páginas em áudio tratado para iniciar e continuar a leitura com menos espera.
 - Identifica figuras acompanhadas por legenda ou marcação de acessibilidade no PDF.
 - Extrai e mostra a figura em destaque durante a narração.
@@ -62,21 +63,27 @@ uma descrição limitada ao conteúdo que o aplicativo consegue detectar.
 
 ## Voz neural offline incluída
 
-Na tela do livro, abra o seletor **Voz** e escolha
-**Miro — narrador neural natural · offline**. O motor e o modelo já fazem parte do APK; não
-é necessário instalar outro aplicativo, baixar arquivos adicionais ou alterar
-as configurações do Android.
+Na tela do livro, abra o seletor **Voz** e escolha entre **Miro — narrador
+neural natural · offline** e **Dii — narradora neural expressiva · offline**.
+O motor e os dois modelos já fazem parte do APK; não é necessário instalar
+outro aplicativo, baixar arquivos adicionais ou alterar as configurações do
+Android.
 
-Ao abrir um livro com Miro selecionado, o aplicativo já começa a preparar em
+Ao abrir um livro com uma voz neural selecionada, o aplicativo começa a preparar em
 segundo plano até três páginas a partir da posição atual. Cada trecho é
 sintetizado, passa pela redução neural de ruído e fica em um cache local. Se
 você tocar em reproduzir antes do fim, a leitura recebe prioridade e o cache
 continua sendo abastecido adiante durante a reprodução. O cache de áudio é
 limitado a 192 MB e o conteúdo do livro não é enviado para a internet.
 
-O APK com a voz neural e o OCR offline tem aproximadamente 165 MB e suporta aparelhos ARM64 e
-ARM32. O modelo Miro possui licença CC BY-NC-SA 4.0 e, portanto, esta distribuição
-é destinada a uso pessoal e não comercial. Consulte `THIRD_PARTY_NOTICES.md`.
+O APK com as duas vozes neurais e o OCR offline tem aproximadamente 225 MB e
+suporta aparelhos ARM64 e ARM32. Os modelos Miro e Dii são destinados a uso
+pessoal e não comercial e são redistribuídos sem alterações. Consulte
+`THIRD_PARTY_NOTICES.md`.
+
+O processamento também ignora cabeçalhos, rodapés e números marcados pelo PDF
+como artefatos de paginação. Para documentos sem essa marcação, há um filtro de
+margens que reconhece títulos com letras muito espaçadas e números anexados.
 
 O OCR desta versão é aplicado às figuras detectadas. PDFs inteiros formados
 apenas por páginas escaneadas ainda não têm extração completa do texto.
@@ -86,13 +93,18 @@ apenas por páginas escaneadas ainda não têm extração completa do texto.
 Esta seção é necessária somente para quem quiser modificar ou compilar o
 código. Para instalar o aplicativo, use o APK disponibilizado acima.
 
-O projeto utiliza JDK 17 e Android SDK 36. Ele pode ser compilado pelo Android
+O projeto utiliza JDK 17 e Android SDK 37. Ele pode ser compilado pelo Android
 Studio ou diretamente pelo Gradle, em um ambiente que tenha o Android SDK
 configurado:
 
 ```bash
 ./gradlew assembleDebug
 ```
+
+Para manter o histórico Git leve, o arquivo ONNX da voz Dii fica anexado à
+release v0.8.0. Em um clone novo, o primeiro build baixa esse arquivo uma única
+vez e confere seu SHA-256 antes de empacotá-lo. Isso só afeta quem recompila o
+projeto; o APK publicado já contém a voz e não precisa de internet para usá-la.
 
 O aplicativo é compatível com Android 8.0 (API 26) ou superior.
 

@@ -57,6 +57,36 @@ class TextPreprocessorTest {
     }
 
     @Test
+    fun removesLetterSpacedRunningHeadersWithAttachedPageNumbers() {
+        val pages = listOf(
+            "U M  G E R A D O R  D E  T E X T O  M U I T O  B O M17\nTexto principal.",
+            "18 C O M P E T E N T E  O  S U F I C I E N T E\nOutro texto.",
+        )
+
+        val cleaned = TextPreprocessor.cleanDocumentPages(pages)
+
+        assertEquals("Texto principal.", cleaned[0])
+        assertEquals("Outro texto.", cleaned[1])
+    }
+
+    @Test
+    fun preservesAndNormalizesLetterSpacedSectionTitlesWithoutPageNumbers() {
+        assertEquals("PARTE I", TextPreprocessor.cleanPage("P A R T E  I"))
+        assertEquals(
+            "ESTE É UM AVISO IMPORTANTE",
+            TextPreprocessor.cleanDocumentPages(listOf("ESTE É UM AVISO IMPORTANTE")).single(),
+        )
+    }
+
+    @Test
+    fun joinsWordsBrokenBySoftHyphens() {
+        assertEquals(
+            "A retropropagação funciona com pré-treino.",
+            TextPreprocessor.cleanPage("A re\u00ad\ntropropagação funciona com pré\u00adtreino."),
+        )
+    }
+
+    @Test
     fun extractsMultilineFigureCaptionAndItsPosition() {
         val raw = """
             Cabeçalho do capítulo

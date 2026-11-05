@@ -20,8 +20,9 @@ class NeuralAudioCache(context: Context) {
         chunkIndex: Int,
         text: String,
         speechRate: Float,
+        voiceName: String,
     ): NeuralAudio? {
-        val file = cacheFile(bookId, chunkIndex, text, speechRate)
+        val file = cacheFile(bookId, chunkIndex, text, speechRate, voiceName)
         if (!file.isFile) return null
 
         return runCatching {
@@ -50,10 +51,11 @@ class NeuralAudioCache(context: Context) {
         chunkIndex: Int,
         text: String,
         speechRate: Float,
+        voiceName: String,
         audio: NeuralAudio,
     ) {
         if (audio.samples.isEmpty() || audio.sampleRate <= 0) return
-        val destination = cacheFile(bookId, chunkIndex, text, speechRate)
+        val destination = cacheFile(bookId, chunkIndex, text, speechRate, voiceName)
         if (destination.isFile) return
         destination.parentFile?.mkdirs()
 
@@ -89,10 +91,12 @@ class NeuralAudioCache(context: Context) {
         chunkIndex: Int,
         text: String,
         speechRate: Float,
+        voiceName: String,
     ): File {
         val bookDirectory = File(root, sha256(bookId).take(20))
         val rateKey = (speechRate.coerceIn(0.6f, 1.6f) * 1_000).roundToInt()
-        val contentKey = sha256("$PROCESSING_PROFILE\n$rateKey\n$text").take(20)
+        val voiceKey = if (voiceName == EMBEDDED_NEURAL_MIRO_VOICE_NAME) "" else "$voiceName\n"
+        val contentKey = sha256("$PROCESSING_PROFILE\n$rateKey\n$voiceKey$text").take(20)
         return File(bookDirectory, "${chunkIndex}_$contentKey.pcm")
     }
 

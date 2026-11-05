@@ -15,7 +15,8 @@ import com.leitorlocal.pdf.PdfPageRenderer
 import com.leitorlocal.speech.ReadingService
 import com.leitorlocal.speech.ReadingSession
 import com.leitorlocal.speech.TtsVoiceCatalog
-import com.leitorlocal.speech.EMBEDDED_NEURAL_VOICE_NAME
+import com.leitorlocal.speech.EMBEDDED_NEURAL_VOICES
+import com.leitorlocal.speech.embeddedNeuralVoice
 import com.leitorlocal.model.VoiceOption
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -93,6 +94,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         mutableUiState.update { it.copy(selectedVoiceName = name) }
         ReadingSession.updateSettings(uiState.value.speechRate, name)
         preferences.saveSettings(uiState.value.speechRate, name)
+        if (uiState.value.book != null && embeddedNeuralVoice(name) != null) {
+            ReadingService.prepareNeural(getApplication())
+        }
     }
 
     fun clearError() {
@@ -114,19 +118,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
         voiceCatalog.load { voices ->
             mutableUiState.update { state ->
-                val neuralVoice = VoiceOption(
-                    name = EMBEDDED_NEURAL_VOICE_NAME,
-                    label = "Miro — narrador neural natural · offline",
-                    localeTag = "pt-BR",
-                    requiresNetwork = false,
-                    quality = Int.MAX_VALUE,
-                    isHighQuality = true,
-                    isEmbeddedNeural = true,
-                )
-                val allVoices = listOf(neuralVoice) + voices
+                val neuralVoices = EMBEDDED_NEURAL_VOICES.map { voice ->
+                    VoiceOption(
+                        name = voice.name,
+                        label = voice.label,
+                        localeTag = "pt-BR",
+                        requiresNetwork = false,
+                        quality = Int.MAX_VALUE,
+                        isHighQuality = true,
+                        isEmbeddedNeural = true,
+                    )
+                }
+                val allVoices = neuralVoices + voices
                 val saved = preferences.settings().voiceName
                 val selected = saved?.takeIf { name -> allVoices.any { it.name == name } }
-                    ?: neuralVoice.name
+                    ?: neuralVoices.first().name
                 state.copy(voices = allVoices, selectedVoiceName = selected)
             }
         }

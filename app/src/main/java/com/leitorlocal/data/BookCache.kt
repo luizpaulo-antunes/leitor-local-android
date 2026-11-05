@@ -12,7 +12,7 @@ import java.io.File
 import java.security.MessageDigest
 
 class BookCache(private val context: Context) {
-    private val directory = File(context.filesDir, "processed_books_v3").apply { mkdirs() }
+    private val directory = File(context.filesDir, "processed_books_v4").apply { mkdirs() }
 
     fun load(uri: Uri, title: String): BookContent? = runCatching {
         val file = cacheFile(uri)

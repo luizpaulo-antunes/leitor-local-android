@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
+import android.media.audiofx.LoudnessEnhancer
 import android.os.Handler
 import android.os.Looper
 import com.github.csukuangfj.piper.phonemize.piperPhonemizeInitialize
@@ -16,10 +17,11 @@ import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 
 class EmbeddedNeuralTts(private val context: Context) {
     private var engine: OfflineTts? = null
+    private var activeVoiceName: String? = null
     private val speechEnhancer = NeuralSpeechEnhancer(context)
 
-    fun generate(text: String, speed: Float): NeuralAudio {
-        val tts = engine ?: createEngine().also { engine = it }
+    fun generate(text: String, speed: Float, voice: EmbeddedNeuralVoice): NeuralAudio {
+        val tts = engineFor(voice)
         val phonemes = piperPhonemizeText(text, tts.lang().ifEmpty { "pt-br" })
             ?: error("O fonemizador não conseguiu preparar o texto em português.")
         val codepoints = try {
@@ -43,18 +45,30 @@ class EmbeddedNeuralTts(private val context: Context) {
         speechEnhancer.release()
         engine?.release()
         engine = null
+        activeVoiceName = null
     }
 
-    private fun createEngine(): OfflineTts {
+    private fun engineFor(voice: EmbeddedNeuralVoice): OfflineTts {
+        if (activeVoiceName == voice.name) engine?.let { return it }
+        engine?.release()
+        engine = null
+        activeVoiceName = null
+        return createEngine(voice).also {
+            engine = it
+            activeVoiceName = voice.name
+        }
+    }
+
+    private fun createEngine(voice: EmbeddedNeuralVoice): OfflineTts {
         piperPhonemizeInitialize(context.applicationContext)
         val config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(
                 vits = OfflineTtsVitsModelConfig(
-                    model = "$MODEL_DIRECTORY/$MODEL_FILE",
-                    tokens = "$MODEL_DIRECTORY/tokens.txt",
+                    model = "${voice.modelDirectory}/${voice.modelFile}",
+                    tokens = "${voice.modelDirectory}/tokens.txt",
                     dataDir = "",
-                    noiseScale = 0.5f,
-                    noiseScaleW = 0.65f,
+                    noiseScale = voice.noiseScale,
+                    noiseScaleW = voice.noiseScaleW,
                     lengthScale = 1.0f,
                 ),
                 numThreads = 2,
@@ -66,16 +80,12 @@ class EmbeddedNeuralTts(private val context: Context) {
         )
         return OfflineTts(assetManager = context.assets, config = config)
     }
-
-    companion object {
-        private const val MODEL_DIRECTORY = "vits-piper-pt_BR-miro-high"
-        private const val MODEL_FILE = "pt_BR-miro-high.onnx"
-    }
 }
 
 class NeuralAudioPlayer {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var track: AudioTrack? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
     private var framesWritten = 0
     private var completion: (() -> Unit)? = null
     private var error: ((Throwable) -> Unit)? = null
@@ -110,6 +120,13 @@ class NeuralAudioPlayer {
             check(newTrack.state == AudioTrack.STATE_INITIALIZED) {
                 "Não foi possível abrir a saída de áudio neural."
             }
+            track = newTrack
+            loudnessEnhancer = runCatching {
+                LoudnessEnhancer(newTrack.audioSessionId).apply {
+                    setTargetGain(NEURAL_VOLUME_BOOST_MILLIBELS)
+                    enabled = true
+                }
+            }.getOrNull()
             newTrack.setPlaybackPositionUpdateListener(
                 object : AudioTrack.OnPlaybackPositionUpdateListener {
                     override fun onMarkerReached(audioTrack: AudioTrack?) {
@@ -119,7 +136,6 @@ class NeuralAudioPlayer {
                     override fun onPeriodicNotification(audioTrack: AudioTrack?) = Unit
                 },
             )
-            track = newTrack
             framesWritten = 0
             completion = onCompletion
             error = onError
@@ -198,11 +214,17 @@ class NeuralAudioPlayer {
 
     @Synchronized
     fun stop() {
-        val current = track ?: return
+        val current = track
         track = null
         completion = null
         error = null
         framesWritten = 0
+        loudnessEnhancer?.let { enhancer ->
+            runCatching { enhancer.enabled = false }
+            runCatching(enhancer::release)
+        }
+        loudnessEnhancer = null
+        if (current == null) return
         runCatching { current.setPlaybackPositionUpdateListener(null) }
         runCatching {
             if (current.playState != AudioTrack.PLAYSTATE_STOPPED) current.stop()
@@ -212,5 +234,7 @@ class NeuralAudioPlayer {
 
     companion object {
         private const val PLAYBACK_BLOCK_SAMPLES = 4096
+        // 20 * log10(1.20) = 1.58 dB. LoudnessEnhancer receives millibels.
+        private const val NEURAL_VOLUME_BOOST_MILLIBELS = 158
     }
 }

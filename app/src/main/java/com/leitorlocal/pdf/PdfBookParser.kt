@@ -10,7 +10,6 @@ import com.leitorlocal.text.TextPreprocessor
 import com.leitorlocal.text.FigureDescriptionComposer
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
-import com.tom_roush.pdfbox.text.PDFTextStripper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -38,7 +37,7 @@ class PdfBookParser(private val context: Context) {
                 val totalPages = document.numberOfPages
                 val chunks = mutableListOf<SpeechChunk>()
                 val rawPages = mutableListOf<String>()
-                val stripper = PDFTextStripper().apply {
+                val stripper = ArtifactIgnoringTextStripper().apply {
                     sortByPosition = true
                 }
 

@@ -165,6 +165,7 @@ class ReadingService : Service() {
     }
 
     private fun speakCurrentWithNeuralVoice() {
+        val voice = embeddedNeuralVoice(ReadingSession.voiceName) ?: return
         val startIndex = ReadingSession.state.value.currentChunkIndex
         if (ReadingSession.chunkAt(startIndex) == null) return
         tts?.stop()
@@ -194,6 +195,7 @@ class ReadingService : Service() {
                         chunkIndex = index,
                         text = chunk.text,
                         speechRate = ReadingSession.speechRate,
+                        voice = voice,
                     )
                     check(audio.samples.isNotEmpty()) { "O modelo não gerou amostras de áudio." }
                     if (!offerNeuralItem(
@@ -226,6 +228,7 @@ class ReadingService : Service() {
         val bookId = ReadingSession.bookId
         val startIndex = ReadingSession.state.value.currentChunkIndex
         val speechRate = ReadingSession.speechRate
+        val voice = embeddedNeuralVoice(ReadingSession.voiceName) ?: return
         val indices = prewarmIndices(startIndex)
 
         neuralExecutor.execute {
@@ -244,6 +247,7 @@ class ReadingService : Service() {
                         chunkIndex = index,
                         text = chunk.text,
                         speechRate = speechRate,
+                        voice = voice,
                     )
                 }
             } finally {
@@ -273,10 +277,11 @@ class ReadingService : Service() {
         chunkIndex: Int,
         text: String,
         speechRate: Float,
+        voice: EmbeddedNeuralVoice,
     ): NeuralAudio {
-        neuralAudioCache.load(bookId, chunkIndex, text, speechRate)?.let { return it }
-        val generated = neuralTts.generate(text, speechRate)
-        neuralAudioCache.save(bookId, chunkIndex, text, speechRate, generated)
+        neuralAudioCache.load(bookId, chunkIndex, text, speechRate, voice.name)?.let { return it }
+        val generated = neuralTts.generate(text, speechRate, voice)
+        neuralAudioCache.save(bookId, chunkIndex, text, speechRate, voice.name, generated)
         return generated
     }
 
@@ -467,7 +472,7 @@ class ReadingService : Service() {
     }
 
     private fun usesEmbeddedNeuralVoice(): Boolean =
-        ReadingSession.voiceName == EMBEDDED_NEURAL_VOICE_NAME
+        embeddedNeuralVoice(ReadingSession.voiceName) != null
 
     private fun cancelNeuralPlayback() {
         neuralRequestId += 1

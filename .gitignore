@@ -7,3 +7,4 @@
 .externalNativeBuild/
 .cxx/
 app/build/
+/app/src/main/assets/vits-piper-pt_BR-dii-high/pt_BR-dii-high.onnx
