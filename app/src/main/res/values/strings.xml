@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">Leitor Local</string>
+    <string name="notification_channel_name">Leitura em voz alta</string>
+    <string name="notification_channel_description">Controles da leitura do livro</string>
+</resources>

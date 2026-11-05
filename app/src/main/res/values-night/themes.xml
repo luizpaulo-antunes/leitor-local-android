@@ -1,0 +1,7 @@
+<resources>
+    <style name="Theme.LeitorLocal" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:statusBarColor">#181815</item>
+        <item name="android:navigationBarColor">#181815</item>
+    </style>
+</resources>
