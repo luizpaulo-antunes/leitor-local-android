@@ -157,7 +157,8 @@ class ReadingService : Service() {
             runCatching {
                 if (requestId != neuralRequestId || !playWhenReady) return@runCatching
                 val audio = neuralTts.generate(chunk.text, ReadingSession.speechRate)
-                check(audio.samples.isNotEmpty()) { "O modelo não gerou amostras de áudio." }
+                val improvedSamples = NeuralAudioProcessor.improve(audio.samples, audio.sampleRate)
+                check(improvedSamples.isNotEmpty()) { "O modelo não gerou amostras de áudio." }
                 if (requestId != neuralRequestId || !playWhenReady) return@runCatching
                 neuralPlayer.start(
                     sampleRate = audio.sampleRate,
@@ -171,7 +172,7 @@ class ReadingService : Service() {
                         ReadingSession.setStatus(PlaybackStatus.PLAYING)
                     }
                 }
-                if (neuralPlayer.write(audio.samples) && requestId == neuralRequestId && playWhenReady) {
+                if (neuralPlayer.write(improvedSamples) && requestId == neuralRequestId && playWhenReady) {
                     neuralPlayer.finish()
                 }
             }.onFailure {

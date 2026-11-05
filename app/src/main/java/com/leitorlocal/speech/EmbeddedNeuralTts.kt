@@ -51,8 +51,8 @@ class EmbeddedNeuralTts(private val context: Context) {
                     model = "$MODEL_DIRECTORY/$MODEL_FILE",
                     tokens = "$MODEL_DIRECTORY/tokens.txt",
                     dataDir = "",
-                    noiseScale = 0.667f,
-                    noiseScaleW = 0.8f,
+                    noiseScale = 0.55f,
+                    noiseScaleW = 0.7f,
                     lengthScale = 1.0f,
                 ),
                 numThreads = 2,
@@ -85,7 +85,7 @@ class NeuralAudioPlayer {
             val minimumBuffer = AudioTrack.getMinBufferSize(
                 sampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
+                AudioFormat.ENCODING_PCM_FLOAT,
             )
             check(minimumBuffer > 0) { "O aparelho não aceitou o formato de áudio neural." }
             val newTrack = AudioTrack.Builder()
@@ -97,7 +97,7 @@ class NeuralAudioPlayer {
                 )
                 .setAudioFormat(
                     AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
                         .setSampleRate(sampleRate)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .build(),
@@ -134,14 +134,11 @@ class NeuralAudioPlayer {
         while (offset < samples.size) {
             val current = synchronized(this) { track } ?: return false
             val blockSize = minOf(PLAYBACK_BLOCK_SAMPLES, samples.size - offset)
-            val pcm = ShortArray(blockSize) { index ->
-                (samples[offset + index].coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
-            }
             val count = runCatching {
                 current.write(
-                    pcm,
-                    0,
-                    pcm.size,
+                    samples,
+                    offset,
+                    blockSize,
                     AudioTrack.WRITE_BLOCKING,
                 )
             }.getOrElse { failure ->
