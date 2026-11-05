@@ -2,6 +2,7 @@ package com.leitorlocal.ui
 
 import android.graphics.BitmapFactory
 import android.os.Build
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
@@ -72,11 +73,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.dropShadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.shadow.Shadow
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -88,6 +93,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
@@ -97,8 +104,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.leitorlocal.ReaderViewModel
 import com.leitorlocal.model.PlaybackStatus
@@ -106,7 +115,13 @@ import com.leitorlocal.model.LibraryBook
 import com.leitorlocal.model.ReaderUiState
 import com.leitorlocal.model.VoiceOption
 import java.util.Locale
+import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+private val KaraokeCardColor = Color(0xFFFAF8F5)
+private val KaraokeTextColor = Color(0xFF272521)
+private val ActiveWordBackground = Color(0xFFC8E6D4)
+private val ActiveWordText = Color(0xFF1B4332)
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF315D49),
@@ -454,9 +469,18 @@ private fun ReaderContent(
         state.playback.currentChunkIndex.toFloat() / (book.chunks.size - 1)
     val isPlaying = state.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)
     var settingsExpanded by rememberSaveable(book.uri) { mutableStateOf(false) }
+    var showPagesWithoutTextToast by remember(book.uri) { mutableStateOf(false) }
 
     LaunchedEffect(isPlaying) {
         if (isPlaying) settingsExpanded = false
+    }
+    LaunchedEffect(book.uri, book.pagesWithoutText, state.isOcrRunning) {
+        showPagesWithoutTextToast = false
+        if (!state.isOcrRunning && book.pagesWithoutText > 0) {
+            showPagesWithoutTextToast = true
+            delay(3_000)
+            showPagesWithoutTextToast = false
+        }
     }
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -503,7 +527,6 @@ private fun ReaderContent(
             OcrStatus(
                 isRunning = state.isOcrRunning,
                 message = state.ocrMessage,
-                pagesWithoutText = book.pagesWithoutText,
             )
 
             PlaybackControls(
@@ -527,6 +550,16 @@ private fun ReaderContent(
             )
             Spacer(Modifier.height(if (compactHeight) 6.dp else 10.dp))
         }
+
+        if (showPagesWithoutTextToast) {
+            ReaderToast(
+                message = "${book.pagesWithoutText} página(s) sem texto legível foram ignoradas.",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 24.dp, vertical = 18.dp)
+                    .zIndex(10f),
+            )
+        }
     }
 }
 
@@ -537,58 +570,47 @@ private fun ReaderPage(
     modifier: Modifier = Modifier,
 ) {
     // RenderEffect (usado por Modifier.blur) existe a partir do Android 12.
-    // Em aparelhos anteriores o scrim adaptativo do overlay mantém o foco e o contraste.
+    // Em aparelhos anteriores o overlay uniforme mantém o foco e o contraste.
     val supportsGaussianBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    Card(
-        modifier = modifier.border(
-            width = 1.dp,
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
-            shape = RoundedCornerShape(16.dp),
-        ),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-    ) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            // A camada de blur fica limitada ao viewport, evitando uma textura GPU do tamanho
-            // de toda a página rolável.
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .blur(if (isPlaying && supportsGaussianBlur) 3.dp else 0.dp)
-                    .then(
-                        if (isPlaying) {
-                            Modifier.clearAndSetSemantics { }
-                        } else {
-                            Modifier
-                        },
-                    ),
-                contentAlignment = Alignment.TopCenter,
-            ) {
-                val bitmap = state.pageBitmap
-                if (bitmap == null) {
-                    CircularProgressIndicator(Modifier.align(Alignment.Center))
-                } else {
-                    key(state.currentPage) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .verticalScroll(rememberScrollState()),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            Image(
-                                bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "Página ${state.currentPage + 1}",
-                                modifier = Modifier.fillMaxWidth(),
-                                contentScale = ContentScale.FillWidth,
-                            )
+    Box(modifier = modifier, contentAlignment = Alignment.TopCenter) {
+        // A camada de blur fica limitada ao viewport, evitando uma textura GPU do tamanho
+        // de toda a página rolável.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(if (isPlaying && supportsGaussianBlur) 3.dp else 0.dp)
+                .then(
+                    if (isPlaying) {
+                        Modifier.clearAndSetSemantics { }
+                    } else {
+                        Modifier
+                    },
+                ),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            val bitmap = state.pageBitmap
+            if (bitmap == null) {
+                CircularProgressIndicator(Modifier.align(Alignment.Center))
+            } else {
+                key(state.currentPage) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .verticalScroll(rememberScrollState()),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "Página ${state.currentPage + 1}",
+                            modifier = Modifier.fillMaxWidth(),
+                            contentScale = ContentScale.FillWidth,
+                        )
                         }
-                    }
                 }
             }
-
-            if (isPlaying) KaraokeFocusOverlay(state)
         }
+
+        if (isPlaying) KaraokeFocusOverlay(state)
     }
 }
 
@@ -599,68 +621,19 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
         chunk.figure?.imagePath?.let(BitmapFactory::decodeFile)
     }
     val focusedBitmap = figureBitmap ?: state.pageBitmap.takeIf { chunk.figure != null }
-    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
-    val supportsGaussianBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-    val panelShape = RoundedCornerShape(26.dp)
-    val scrimAlpha = when {
-        !supportsGaussianBlur && isDark -> 0.18f
-        !supportsGaussianBlur -> 0.06f
-        isDark -> 0.12f
-        else -> 0.03f
+    val panelShape = RoundedCornerShape(20.dp)
+    val badgeLabel = when {
+        state.playback.status == PlaybackStatus.PREPARING && chunk.figure != null ->
+            "Preparando descrição da figura…"
+        state.playback.status == PlaybackStatus.PREPARING -> "Preparando voz…"
+        chunk.figure != null -> "Figura · lendo agora"
+        else -> "Lendo agora"
     }
-    val glassBackground = Brush.verticalGradient(
-        colors = when {
-            !supportsGaussianBlur && isDark -> listOf(
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-                Color.Black.copy(alpha = 0.84f),
-            )
-            !supportsGaussianBlur -> listOf(
-                Color.White.copy(alpha = 0.78f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f),
-            )
-            isDark -> listOf(
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
-                Color.Black.copy(alpha = 0.62f),
-            )
-            else -> listOf(
-                Color.White.copy(alpha = 0.50f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.44f),
-                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
-            )
-        },
-    )
-    val glassBorder = Brush.linearGradient(
-        colors = if (isDark) {
-            listOf(
-                Color.White.copy(alpha = 0.30f),
-                Color.White.copy(alpha = 0.14f),
-                Color.White.copy(alpha = 0.08f),
-            )
-        } else {
-            listOf(
-                Color.White.copy(alpha = 0.58f),
-                MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
-                Color.White.copy(alpha = 0.20f),
-            )
-        },
-    )
 
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = scrimAlpha))
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = if (isDark) 0.03f else 0.02f),
-                        Color.Transparent,
-                    ),
-                    radius = 1_100f,
-                ),
-            )
+            .background(Color.Black.copy(alpha = 0.10f))
             .padding(horizontal = 14.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
@@ -705,67 +678,34 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 640.dp)
-                    .heightIn(min = 220.dp, max = panelMaxHeight)
-                    .shadow(
-                        elevation = 8.dp,
+                    .heightIn(max = panelMaxHeight)
+                    .dropShadow(
                         shape = panelShape,
-                        clip = false,
+                        shadow = Shadow(
+                            radius = 32.dp,
+                            spread = 0.dp,
+                            offset = DpOffset(0.dp, 12.dp),
+                            color = Color.Black.copy(alpha = 0.12f),
+                        ),
                     )
                     .clip(panelShape)
-                    .background(glassBackground)
-                    .border(width = 1.dp, brush = glassBorder, shape = panelShape)
+                    .background(KaraokeCardColor)
+                    .border(
+                        width = 1.dp,
+                        color = Color.Black.copy(alpha = 0.06f),
+                        shape = panelShape,
+                    )
                     .onSizeChanged { viewportHeightPx = it.height }
                     .semantics { paneTitle = "Trecho em leitura" },
             ) {
-                // Um brilho suave no topo reforça o vidro sem reduzir a legibilidade.
-                Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(
-                                    Color.White.copy(alpha = if (isDark) 0.025f else 0.06f),
-                                    Color.Transparent,
-                                ),
-                                endY = 420f,
-                            ),
-                        ),
-                )
                 Column(
                     Modifier
                         .fillMaxWidth()
                         .verticalScroll(focusScrollState)
-                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                        .padding(24.dp),
                 ) {
-                    Surface(
-                        modifier = Modifier.border(
-                            width = 0.5.dp,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(
-                                alpha = if (isDark) 0.22f else 0.12f,
-                            ),
-                            shape = CircleShape,
-                        ),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(
-                            alpha = if (supportsGaussianBlur) 0.76f else 0.94f,
-                        ),
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        shape = CircleShape,
-                    ) {
-                        Text(
-                            text = when {
-                                state.playback.status == PlaybackStatus.PREPARING && chunk.figure != null ->
-                                    "Preparando descrição da figura…"
-                                state.playback.status == PlaybackStatus.PREPARING ->
-                                    "Preparando voz…"
-                                chunk.figure != null -> "Figura · lendo agora"
-                                else -> "Lendo agora"
-                            },
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                        )
-                    }
-                    Spacer(Modifier.height(12.dp))
+                    ReadingBadge(badgeLabel)
+                    Spacer(Modifier.height(16.dp))
                     if (focusedBitmap != null && chunk.figure != null) {
                         Image(
                             bitmap = focusedBitmap.asImageBitmap(),
@@ -783,22 +723,15 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
                         )
                         Spacer(Modifier.height(14.dp))
                     }
-                    val activeWordColor = MaterialTheme.colorScheme.onPrimaryContainer
-                    val activeWordBackground = MaterialTheme.colorScheme.primaryContainer.copy(
-                        alpha = if (isDark) 0.92f else 0.82f,
-                    )
-                    val highlightedText = buildAnnotatedString {
-                        append(chunk.text)
-                        if (
-                            activeWordEnd > activeWordStart &&
+                    val hasActiveWord =
+                        activeWordEnd > activeWordStart &&
                             activeWordStart >= 0 &&
                             activeWordEnd <= chunk.text.length
-                        ) {
+                    val highlightedText = buildAnnotatedString {
+                        append(chunk.text)
+                        if (hasActiveWord) {
                             addStyle(
-                                SpanStyle(
-                                    color = activeWordColor,
-                                    background = activeWordBackground,
-                                ),
+                                SpanStyle(color = ActiveWordText),
                                 activeWordStart,
                                 activeWordEnd,
                             )
@@ -807,14 +740,63 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
                     Text(
                         text = highlightedText,
                         style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
+                        color = KaraokeTextColor,
                         fontFamily = FontFamily.Serif,
                         lineHeight = MaterialTheme.typography.titleMedium.lineHeight * 1.18f,
                         onTextLayout = { textLayout = it },
-                        modifier = Modifier.onGloballyPositioned { coordinates ->
-                            val contentTop = coordinates.positionInParent().y.roundToInt()
-                            if (textTopPx != contentTop) textTopPx = contentTop
-                        },
+                        modifier = Modifier
+                            .drawBehind {
+                                val layout = textLayout
+                                if (!hasActiveWord || layout == null) return@drawBehind
+
+                                val firstLine = layout.getLineForOffset(activeWordStart)
+                                val lastLine = layout.getLineForOffset(activeWordEnd - 1)
+                                val horizontalPadding = 5.dp.toPx()
+                                val verticalPadding = 2.dp.toPx()
+                                val cornerRadius = CornerRadius(6.dp.toPx())
+
+                                for (line in firstLine..lastLine) {
+                                    val segmentStart = maxOf(
+                                        activeWordStart,
+                                        layout.getLineStart(line),
+                                    )
+                                    val segmentEnd = minOf(
+                                        activeWordEnd,
+                                        layout.getLineEnd(line, visibleEnd = true),
+                                    )
+                                    if (segmentEnd <= segmentStart) continue
+
+                                    var left = Float.POSITIVE_INFINITY
+                                    var top = Float.POSITIVE_INFINITY
+                                    var right = Float.NEGATIVE_INFINITY
+                                    var bottom = Float.NEGATIVE_INFINITY
+                                    for (offset in segmentStart until segmentEnd) {
+                                        val bounds = layout.getBoundingBox(offset)
+                                        left = minOf(left, bounds.left)
+                                        top = minOf(top, bounds.top)
+                                        right = maxOf(right, bounds.right)
+                                        bottom = maxOf(bottom, bounds.bottom)
+                                    }
+                                    if (!left.isFinite() || !right.isFinite()) continue
+
+                                    drawRoundRect(
+                                        color = ActiveWordBackground,
+                                        topLeft = Offset(
+                                            x = left - horizontalPadding,
+                                            y = top - verticalPadding,
+                                        ),
+                                        size = Size(
+                                            width = right - left + horizontalPadding * 2f,
+                                            height = bottom - top + verticalPadding * 2f,
+                                        ),
+                                        cornerRadius = cornerRadius,
+                                    )
+                                }
+                            }
+                            .onGloballyPositioned { coordinates ->
+                                val contentTop = coordinates.positionInParent().y.roundToInt()
+                                if (textTopPx != contentTop) textTopPx = contentTop
+                            },
                     )
                 }
             }
@@ -823,24 +805,63 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
 }
 
 @Composable
+private fun ReadingBadge(label: String) {
+    Surface(
+        color = ActiveWordBackground,
+        contentColor = ActiveWordText,
+        shape = CircleShape,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AudioWaveIcon(color = ActiveWordText)
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AudioWaveIcon(
+    color: Color,
+    modifier: Modifier = Modifier,
+) {
+    Canvas(modifier = modifier.size(width = 18.dp, height = 14.dp)) {
+        val barHeights = listOf(0.38f, 0.72f, 1f, 0.72f, 0.38f)
+        val spacing = size.width / (barHeights.size + 1)
+        val centerY = size.height / 2f
+        barHeights.forEachIndexed { index, fraction ->
+            val halfHeight = size.height * fraction / 2f
+            val x = spacing * (index + 1)
+            drawLine(
+                color = color,
+                start = Offset(x, centerY - halfHeight),
+                end = Offset(x, centerY + halfHeight),
+                strokeWidth = 2.dp.toPx(),
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+}
+
+@Composable
 private fun OcrStatus(
     isRunning: Boolean,
     message: String,
-    pagesWithoutText: Int,
 ) {
-    if (!isRunning && pagesWithoutText <= 0) return
-    val containerColor = if (isRunning) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.secondaryContainer
-    }
-    val contentColor = if (isRunning) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSecondaryContainer
-    }
+    if (!isRunning) return
+    val containerColor = MaterialTheme.colorScheme.primaryContainer
+    val contentColor = MaterialTheme.colorScheme.onPrimaryContainer
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 7.dp)
+            .semantics { liveRegion = LiveRegionMode.Polite },
         shape = RoundedCornerShape(10.dp),
         color = containerColor,
         contentColor = contentColor,
@@ -849,23 +870,47 @@ private fun OcrStatus(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (isRunning) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    color = contentColor,
-                )
-                Spacer(Modifier.width(8.dp))
-            }
+            CircularProgressIndicator(
+                modifier = Modifier.size(14.dp),
+                strokeWidth = 2.dp,
+                color = contentColor,
+            )
+            Spacer(Modifier.width(8.dp))
             Text(
-                text = if (isRunning) {
-                    message.ifBlank { "OCR offline preparando páginas escaneadas…" }
-                } else {
-                    "$pagesWithoutText página(s) sem texto legível foram ignoradas."
-                },
+                text = message.ifBlank { "OCR offline preparando páginas escaneadas…" },
                 style = MaterialTheme.typography.labelSmall,
             )
         }
+    }
+}
+
+@Composable
+private fun ReaderToast(
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(14.dp)
+    Surface(
+        modifier = modifier
+            .dropShadow(
+                shape = shape,
+                shadow = Shadow(
+                    radius = 12.dp,
+                    spread = 0.dp,
+                    offset = DpOffset(0.dp, 4.dp),
+                    color = Color.Black.copy(alpha = 0.18f),
+                ),
+            )
+            .semantics { liveRegion = LiveRegionMode.Polite },
+        shape = shape,
+        color = Color(0xFF2D2E2B),
+        contentColor = Color.White,
+    ) {
+        Text(
+            text = message,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
