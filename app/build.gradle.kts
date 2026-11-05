@@ -11,10 +11,14 @@ android {
         applicationId = "com.leitorlocal"
         minSdk = 26
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
     }
 
     buildTypes {
@@ -35,6 +39,15 @@ android {
     buildFeatures {
         compose = true
     }
+
+    packaging {
+        jniLibs {
+            excludes += setOf(
+                "**/libsherpa-onnx-c-api.so",
+                "**/libsherpa-onnx-cxx-api.so",
+            )
+        }
+    }
 }
 
 dependencies {
@@ -53,6 +66,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation(files("libs/sherpa-onnx-2.0.1.aar"))
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 

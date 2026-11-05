@@ -20,6 +20,7 @@ import com.leitorlocal.R
 import com.leitorlocal.data.ReaderPreferences
 import com.leitorlocal.model.PlaybackStatus
 import java.util.Locale
+import java.util.concurrent.Executors
 
 class ReadingService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -27,6 +28,10 @@ class ReadingService : Service() {
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
     private var playWhenReady = false
+    private val neuralExecutor = Executors.newSingleThreadExecutor()
+    private val neuralTts by lazy { EmbeddedNeuralTts(applicationContext) }
+    private val neuralPlayer = NeuralAudioPlayer()
+    @Volatile private var neuralRequestId = 0L
 
     override fun onCreate() {
         super.onCreate()
@@ -53,8 +58,12 @@ class ReadingService : Service() {
         tts = TextToSpeech(applicationContext) { status ->
             val engine = tts
             if (status != TextToSpeech.SUCCESS || engine == null) {
-                ReadingSession.setStatus(PlaybackStatus.ERROR, "O mecanismo de voz não pôde ser iniciado.")
-                stopSelf()
+                if (usesEmbeddedNeuralVoice()) {
+                    if (playWhenReady) speakCurrent()
+                } else {
+                    ReadingSession.setStatus(PlaybackStatus.ERROR, "O mecanismo de voz não pôde ser iniciado.")
+                    stopSelf()
+                }
                 return@TextToSpeech
             }
 
@@ -74,6 +83,7 @@ class ReadingService : Service() {
 
     private fun reloadEngine() {
         playWhenReady = false
+        cancelNeuralPlayback()
         isTtsReady = false
         tts?.stop()
         tts?.shutdown()
@@ -88,12 +98,13 @@ class ReadingService : Service() {
         }
         startForeground(NOTIFICATION_ID, buildNotification(isPlaying = true))
         playWhenReady = true
-        if (isTtsReady) speakCurrent()
+        if (usesEmbeddedNeuralVoice() || isTtsReady) speakCurrent()
     }
 
     private fun pause() {
         playWhenReady = false
         tts?.stop()
+        cancelNeuralPlayback()
         ReadingSession.setStatus(PlaybackStatus.PAUSED)
         startForeground(NOTIFICATION_ID, buildNotification(isPlaying = false))
     }
@@ -101,11 +112,12 @@ class ReadingService : Service() {
     private fun move(offset: Int) {
         val wasPlaying = ReadingSession.state.value.status == PlaybackStatus.PLAYING || playWhenReady
         tts?.stop()
+        cancelNeuralPlayback()
         ReadingSession.moveBy(offset)
         persistPosition()
         if (wasPlaying) {
             playWhenReady = true
-            if (isTtsReady) speakCurrent()
+            if (usesEmbeddedNeuralVoice() || isTtsReady) speakCurrent()
         } else {
             ReadingSession.setStatus(PlaybackStatus.PAUSED)
             updateNotification(false)
@@ -113,6 +125,10 @@ class ReadingService : Service() {
     }
 
     private fun speakCurrent() {
+        if (usesEmbeddedNeuralVoice()) {
+            speakCurrentWithNeuralVoice()
+            return
+        }
         val engine = tts ?: return
         val chunk = ReadingSession.currentChunk() ?: return
         applySettings()
@@ -124,6 +140,34 @@ class ReadingService : Service() {
             null,
             "book-${ReadingSession.state.value.currentChunkIndex}",
         )
+    }
+
+    private fun speakCurrentWithNeuralVoice() {
+        val chunk = ReadingSession.currentChunk() ?: return
+        tts?.stop()
+        neuralPlayer.stop()
+        val requestId = ++neuralRequestId
+        ReadingSession.setStatus(PlaybackStatus.PLAYING)
+        updateNotification(true)
+
+        neuralExecutor.execute {
+            runCatching {
+                neuralTts.generate(chunk.text, ReadingSession.speechRate)
+            }.onSuccess { audio ->
+                mainHandler.post {
+                    if (requestId != neuralRequestId || !playWhenReady) return@post
+                    neuralPlayer.play(
+                        audio = audio,
+                        onCompletion = ::handleChunkDone,
+                        onError = { handleTtsError("A voz neural não conseguiu reproduzir este trecho.") },
+                    )
+                }
+            }.onFailure {
+                if (requestId == neuralRequestId) {
+                    handleTtsError("Não foi possível iniciar a voz neural offline.")
+                }
+            }
+        }
     }
 
     private fun applySettings() {
@@ -144,19 +188,7 @@ class ReadingService : Service() {
         }
 
         override fun onDone(utteranceId: String?) {
-            mainHandler.post {
-                if (!playWhenReady) return@post
-                if (ReadingSession.isAtEnd()) {
-                    ReadingSession.setStatus(PlaybackStatus.STOPPED)
-                    persistPosition()
-                    stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
-                } else {
-                    ReadingSession.moveBy(+1)
-                    persistPosition()
-                    speakCurrent()
-                }
-            }
+            mainHandler.post(::handleChunkDone)
         }
 
         @Deprecated("Deprecated in Java")
@@ -169,12 +201,27 @@ class ReadingService : Service() {
         }
     }
 
-    private fun handleTtsError() {
+    private fun handleChunkDone() {
+        if (!playWhenReady) return
+        if (ReadingSession.isAtEnd()) {
+            ReadingSession.setStatus(PlaybackStatus.STOPPED)
+            persistPosition()
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+        } else {
+            ReadingSession.moveBy(+1)
+            persistPosition()
+            speakCurrent()
+        }
+    }
+
+    private fun handleTtsError(message: String = "A voz selecionada não conseguiu ler este trecho. Tente outra voz.") {
         mainHandler.post {
             playWhenReady = false
+            cancelNeuralPlayback()
             ReadingSession.setStatus(
                 PlaybackStatus.ERROR,
-                "A voz selecionada não conseguiu ler este trecho. Tente outra voz.",
+                message,
             )
             updateNotification(false)
         }
@@ -183,6 +230,7 @@ class ReadingService : Service() {
     private fun stopReading() {
         playWhenReady = false
         tts?.stop()
+        cancelNeuralPlayback()
         ReadingSession.setStatus(PlaybackStatus.STOPPED)
         persistPosition()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -191,6 +239,14 @@ class ReadingService : Service() {
 
     private fun persistPosition() {
         preferences.savePosition(ReadingSession.state.value.currentChunkIndex)
+    }
+
+    private fun usesEmbeddedNeuralVoice(): Boolean =
+        ReadingSession.voiceName == EMBEDDED_NEURAL_VOICE_NAME
+
+    private fun cancelNeuralPlayback() {
+        neuralRequestId += 1
+        neuralPlayer.stop()
     }
 
     private fun createNotificationChannel() {
@@ -251,9 +307,12 @@ class ReadingService : Service() {
     }
 
     override fun onDestroy() {
+        cancelNeuralPlayback()
         tts?.stop()
         tts?.shutdown()
         tts = null
+        neuralExecutor.execute { neuralTts.release() }
+        neuralExecutor.shutdown()
         super.onDestroy()
     }
 

@@ -1,10 +1,5 @@
 package com.leitorlocal.ui
 
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import android.provider.Settings
-import androidx.core.net.toUri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -55,7 +50,6 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -401,63 +395,14 @@ private fun ReaderContent(
             onVoiceSelected = onVoiceSelected,
         )
         Text(
-            text = "Dica: vozes marcadas como “alta qualidade” costumam soar mais naturais.",
+            text = "Miro neural funciona totalmente offline e já está incluída no aplicativo.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp),
         )
-        NeuralVoiceAction(refreshKey = state.voices.hashCode())
         Spacer(Modifier.height(12.dp))
     }
 }
-
-@Composable
-private fun NeuralVoiceAction(refreshKey: Int) {
-    val context = LocalContext.current
-    val installed = remember(refreshKey) {
-        isPackageInstalled(context.packageManager, NEURAL_ENGINE_PACKAGE)
-    }
-    TextButton(
-        onClick = {
-            val intent = if (installed) {
-                Intent("com.android.settings.TTS_SETTINGS").takeIf {
-                    it.resolveActivity(context.packageManager) != null
-                } ?: Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            } else {
-                Intent(Intent.ACTION_VIEW, neuralVoiceDownloadUrl().toUri())
-            }
-            context.startActivity(intent)
-        },
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Text(if (installed) "Ativar voz neural offline" else "Instalar voz neural offline (opcional)")
-    }
-}
-
-@Suppress("DEPRECATION")
-private fun isPackageInstalled(packageManager: PackageManager, packageName: String): Boolean =
-    runCatching {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            packageManager.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
-        } else {
-            packageManager.getApplicationInfo(packageName, 0)
-        }
-    }.isSuccess
-
-private fun neuralVoiceDownloadUrl(): String = when {
-    Build.SUPPORTED_ABIS.any { it == "arm64-v8a" } -> NEURAL_VOICE_ARM64_URL
-    Build.SUPPORTED_ABIS.any { it == "armeabi-v7a" } -> NEURAL_VOICE_ARM32_URL
-    else -> NEURAL_VOICE_CATALOG_URL
-}
-
-private const val NEURAL_ENGINE_PACKAGE = "com.k2fsa.sherpa.onnx.tts.engine"
-private const val NEURAL_VOICE_CATALOG_URL = "https://k2-fsa.github.io/sherpa/onnx/tts/apk-engine.html"
-private const val NEURAL_VOICE_ARM64_URL =
-    "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.22/" +
-        "sherpa-onnx-1.12.22-arm64-v8a-pt-tts-engine-vits-piper-pt_BR-miro-high.apk"
-private const val NEURAL_VOICE_ARM32_URL =
-    "https://huggingface.co/csukuangfj/sherpa-onnx-apk/resolve/main/tts-engine-new/1.12.22/" +
-        "sherpa-onnx-1.12.22-armeabi-v7a-pt-tts-engine-vits-piper-pt_BR-miro-high.apk"
 
 @Composable
 private fun PlaybackControls(

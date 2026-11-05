@@ -51,6 +51,7 @@ data class VoiceOption(
     val requiresNetwork: Boolean,
     val quality: Int,
     val isHighQuality: Boolean,
+    val isEmbeddedNeural: Boolean = false,
 )
 
 data class ReaderUiState(

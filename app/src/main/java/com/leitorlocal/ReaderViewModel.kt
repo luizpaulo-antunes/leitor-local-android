@@ -14,6 +14,8 @@ import com.leitorlocal.pdf.PdfPageRenderer
 import com.leitorlocal.speech.ReadingService
 import com.leitorlocal.speech.ReadingSession
 import com.leitorlocal.speech.TtsVoiceCatalog
+import com.leitorlocal.speech.EMBEDDED_NEURAL_VOICE_NAME
+import com.leitorlocal.model.VoiceOption
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -103,14 +105,20 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
         voiceCatalog.load { voices ->
             mutableUiState.update { state ->
+                val neuralVoice = VoiceOption(
+                    name = EMBEDDED_NEURAL_VOICE_NAME,
+                    label = "Miro neural · pt-BR · offline",
+                    localeTag = "pt-BR",
+                    requiresNetwork = false,
+                    quality = Int.MAX_VALUE,
+                    isHighQuality = true,
+                    isEmbeddedNeural = true,
+                )
+                val allVoices = listOf(neuralVoice) + voices
                 val saved = preferences.settings().voiceName
-                val selected = saved?.takeIf { name -> voices.any { it.name == name } }
-                    ?: voices.firstOrNull {
-                        !it.requiresNetwork && it.isHighQuality && it.localeTag.equals("pt-BR", true)
-                    }?.name
-                    ?: voices.firstOrNull { !it.requiresNetwork && it.localeTag.equals("pt-BR", true) }?.name
-                    ?: voices.firstOrNull()?.name
-                state.copy(voices = voices, selectedVoiceName = selected)
+                val selected = saved?.takeIf { name -> allVoices.any { it.name == name } }
+                    ?: neuralVoice.name
+                state.copy(voices = allVoices, selectedVoiceName = selected)
             }
         }
     }
