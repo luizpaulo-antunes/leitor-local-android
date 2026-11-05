@@ -8,13 +8,15 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.MediaMetadata
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.leitorlocal.MainActivity
 import com.leitorlocal.R
@@ -55,12 +57,14 @@ class ReadingService : Service() {
     private var ttsFallbackRunnable: Runnable? = null
     private var activeTtsChunk: SpeechChunk? = null
     @Volatile private var hasNativeRangeCallbacks = false
+    private lateinit var mediaSession: MediaSession
 
     override fun onCreate() {
         super.onCreate()
         preferences = ReaderPreferences(this)
         neuralAudioCache = NeuralAudioCache(this)
         createNotificationChannel()
+        initializeMediaSession()
         initializeTts()
     }
 
@@ -122,8 +126,9 @@ class ReadingService : Service() {
             stopSelf()
             return
         }
-        startForeground(NOTIFICATION_ID, buildNotification(isPlaying = true))
         playWhenReady = true
+        ReadingSession.setStatus(PlaybackStatus.PREPARING)
+        startForeground(NOTIFICATION_ID, buildNotification(isPlaying = true))
         if (usesEmbeddedNeuralVoice() || isTtsReady) speakCurrent()
     }
 
@@ -330,12 +335,14 @@ class ReadingService : Service() {
                 if (ReadingSession.state.value.currentChunkIndex != chunkIndex) {
                     ReadingSession.setIndex(chunkIndex)
                     persistPosition()
+                    mainHandler.post { updateNotification(true) }
                 }
                 ReadingSession.setStatus(PlaybackStatus.PLAYING)
                 ReadingSession.setWordRange(chunkIndex, wordStart, wordEnd)
             },
         )
         ReadingSession.setStatus(PlaybackStatus.PLAYING)
+        mainHandler.post { updateNotification(true) }
 
         buffered.forEach { audio ->
             if (!playNeuralItem(requestId, audio, sampleRate)) return
@@ -590,37 +597,124 @@ class ReadingService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
+    private fun initializeMediaSession() {
+        mediaSession = MediaSession(this, MEDIA_SESSION_TAG).apply {
+            setCallback(object : MediaSession.Callback() {
+                override fun onPlay() {
+                    play()
+                }
+
+                override fun onPause() {
+                    pause()
+                }
+
+                override fun onSkipToNext() {
+                    move(+1)
+                }
+
+                override fun onSkipToPrevious() {
+                    move(-1)
+                }
+
+                override fun onStop() {
+                    stopReading()
+                }
+            })
+            setFlags(
+                MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
+                    MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS,
+            )
+            setSessionActivity(openAppPendingIntent())
+            setPlaybackToLocal(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build(),
+            )
+            isActive = true
+        }
+    }
+
     private fun buildNotification(isPlaying: Boolean): Notification {
-        val openApp = PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
+        updateMediaSession(isPlaying)
         val playPauseAction = if (isPlaying) ACTION_PAUSE else ACTION_PLAY
         val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
         val playPauseLabel = if (isPlaying) "Pausar" else "Continuar"
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
+        return Notification.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle(ReadingSession.title)
             .setContentText(ReadingSession.currentChunk()?.text?.take(100) ?: "Leitura em voz alta")
-            .setContentIntent(openApp)
+            .setContentIntent(openAppPendingIntent())
             .setOngoing(isPlaying)
             .setOnlyAlertOnce(true)
-            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setCategory(Notification.CATEGORY_TRANSPORT)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setShowWhen(false)
             .addAction(
-                android.R.drawable.ic_media_previous,
-                "Anterior",
-                servicePendingIntent(ACTION_PREVIOUS, 1),
+                Notification.Action.Builder(
+                    android.R.drawable.ic_media_previous,
+                    "Anterior",
+                    servicePendingIntent(ACTION_PREVIOUS, 1),
+                ).build(),
             )
-            .addAction(playPauseIcon, playPauseLabel, servicePendingIntent(playPauseAction, 2))
             .addAction(
-                android.R.drawable.ic_media_next,
-                "Próximo",
-                servicePendingIntent(ACTION_NEXT, 3),
+                Notification.Action.Builder(
+                    playPauseIcon,
+                    playPauseLabel,
+                    servicePendingIntent(playPauseAction, 2),
+                ).build(),
+            )
+            .addAction(
+                Notification.Action.Builder(
+                    android.R.drawable.ic_media_next,
+                    "Próximo",
+                    servicePendingIntent(ACTION_NEXT, 3),
+                ).build(),
+            )
+            .setStyle(
+                Notification.MediaStyle()
+                    .setMediaSession(mediaSession.sessionToken)
+                    .setShowActionsInCompactView(0, 1, 2),
             )
             .build()
+    }
+
+    private fun openAppPendingIntent(): PendingIntent =
+        PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+
+    private fun updateMediaSession(isPlaying: Boolean) {
+        val sessionStatus = ReadingSession.state.value.status
+        val state = when {
+            isPlaying && sessionStatus == PlaybackStatus.PREPARING -> PlaybackState.STATE_BUFFERING
+            isPlaying -> PlaybackState.STATE_PLAYING
+            sessionStatus == PlaybackStatus.ERROR -> PlaybackState.STATE_ERROR
+            sessionStatus == PlaybackStatus.STOPPED -> PlaybackState.STATE_STOPPED
+            else -> PlaybackState.STATE_PAUSED
+        }
+        mediaSession.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, ReadingSession.title)
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, getString(R.string.app_name))
+                .putString(
+                    MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION,
+                    ReadingSession.currentChunk()?.text?.take(160) ?: "Leitura em voz alta",
+                )
+                .build(),
+        )
+        val playbackState = PlaybackState.Builder()
+            .setActions(MEDIA_SESSION_ACTIONS)
+            .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, if (isPlaying) 1f else 0f)
+        ReadingSession.state.value.error?.let(playbackState::setErrorMessage)
+        mediaSession.setPlaybackState(playbackState.build())
+        mediaSession.isActive = true
     }
 
     private fun servicePendingIntent(action: String, requestCode: Int): PendingIntent =
@@ -646,11 +740,14 @@ class ReadingService : Service() {
         neuralExecutor.execute { neuralTts.release() }
         neuralExecutor.shutdown()
         neuralPlaybackExecutor.shutdown()
+        mediaSession.isActive = false
+        mediaSession.release()
         super.onDestroy()
     }
 
     companion object {
         private const val CHANNEL_ID = "book_reading"
+        private const val MEDIA_SESSION_TAG = "LeitorLocalReading"
         private const val NOTIFICATION_ID = 41
         private const val NEURAL_QUEUE_CAPACITY = 8
         private const val NEURAL_PREBUFFER_CHUNKS = 2
@@ -666,6 +763,13 @@ class ReadingService : Service() {
         private const val ACTION_PREVIOUS = "com.leitorlocal.PREVIOUS"
         private const val ACTION_RELOAD_ENGINE = "com.leitorlocal.RELOAD_ENGINE"
         private const val ACTION_STOP = "com.leitorlocal.STOP"
+        private const val MEDIA_SESSION_ACTIONS =
+            PlaybackState.ACTION_PLAY or
+                PlaybackState.ACTION_PAUSE or
+                PlaybackState.ACTION_PLAY_PAUSE or
+                PlaybackState.ACTION_SKIP_TO_PREVIOUS or
+                PlaybackState.ACTION_SKIP_TO_NEXT or
+                PlaybackState.ACTION_STOP
 
         fun play(context: Context) = ContextCompat.startForegroundService(
             context,

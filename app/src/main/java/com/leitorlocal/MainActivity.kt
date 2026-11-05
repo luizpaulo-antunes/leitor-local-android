@@ -7,17 +7,25 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.ui.LeitorLocalApp
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: ReaderViewModel by viewModels()
     private var playAfterPermission = false
+    private var isActivityResumed = false
+    private var hasWindowFocus = false
+    private var isKeepingScreenOn = false
 
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -39,6 +47,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect {
+                    updateKeepScreenOn()
+                }
+            }
+        }
         setContent {
             LeitorLocalApp(
                 viewModel = viewModel,
@@ -60,7 +75,26 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        isActivityResumed = true
         viewModel.refreshVoices()
+        updateKeepScreenOn()
+    }
+
+    override fun onPause() {
+        isActivityResumed = false
+        updateKeepScreenOn()
+        super.onPause()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        hasWindowFocus = hasFocus
+        updateKeepScreenOn()
+    }
+
+    override fun onDestroy() {
+        clearKeepScreenOn()
+        super.onDestroy()
     }
 
     private fun requestNotificationPermissionAndPlay() {
@@ -74,6 +108,32 @@ class MainActivity : ComponentActivity() {
         } else {
             viewModel.play()
         }
+    }
+
+    private fun updateKeepScreenOn() {
+        val state = viewModel.uiState.value
+        val isReaderSpeaking =
+            !state.showingLibrary &&
+                state.book != null &&
+                state.playback.status in setOf(
+                    PlaybackStatus.PLAYING,
+                    PlaybackStatus.PREPARING,
+                )
+        val shouldKeepScreenOn = isActivityResumed && hasWindowFocus && isReaderSpeaking
+        if (shouldKeepScreenOn == isKeepingScreenOn) return
+
+        isKeepingScreenOn = shouldKeepScreenOn
+        if (shouldKeepScreenOn) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    private fun clearKeepScreenOn() {
+        if (!isKeepingScreenOn) return
+        isKeepingScreenOn = false
+        window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
     }
 
     private fun displayName(uri: Uri): String {

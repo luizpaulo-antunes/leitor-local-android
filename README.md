@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.9.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.10.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.9.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.10.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -34,12 +34,16 @@ estão disponíveis neste repositório.
 - Lista vozes em português instaladas e controla a velocidade.
 - Salva automaticamente o último livro e a posição.
 - Mostra uma biblioteca com todos os PDFs abertos e o percentual lido.
+- Exibe a biblioteca em uma grade visual de capas, com progresso e quantidade de páginas.
 - Ignora automaticamente números de página, cabeçalhos e rodapés repetidos.
 - Prepara parágrafos, títulos e pausas para uma narração mais natural.
 - Identifica e prioriza vozes em português de alta qualidade instaladas no aparelho.
 - Mantém um cache local do texto processado para reabrir livros sem reler todas as páginas.
 - Exibe o trecho atual em modo de foco, sobre a página suavemente desfocada.
 - Destaca e acompanha automaticamente cada palavra durante a narração.
+- Mantém a página como foco principal e reúne voz e velocidade em ajustes recolhíveis.
+- Mantém a tela ligada enquanto o leitor está visível e narrando, liberando-a ao pausar ou sair.
+- Mostra anterior, pausar/continuar e próximo na notificação, tela bloqueada e painel de mídia.
 - Inclui as vozes neurais brasileiras Miro e Dii, executadas offline pelo Sherpa-ONNX.
 - Aplica um perfil próprio a cada voz: Miro recebe redução de ruído e Dii preserva o áudio original em 22,05 kHz.
 - Reforça o volume das vozes neurais em 20%, com limitador contra saturação.
