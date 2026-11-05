@@ -38,6 +38,7 @@ private sealed interface NeuralQueueItem {
 class ReadingService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var preferences: ReaderPreferences
+    private lateinit var neuralAudioCache: NeuralAudioCache
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
     private var playWhenReady = false
@@ -47,10 +48,12 @@ class ReadingService : Service() {
     private val neuralPlayer = NeuralAudioPlayer()
     @Volatile private var neuralRequestId = 0L
     @Volatile private var neuralQueue: ArrayBlockingQueue<NeuralQueueItem>? = null
+    @Volatile private var prewarmRequestId = 0L
 
     override fun onCreate() {
         super.onCreate()
         preferences = ReaderPreferences(this)
+        neuralAudioCache = NeuralAudioCache(this)
         createNotificationChannel()
         initializeTts()
     }
@@ -58,6 +61,7 @@ class ReadingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PLAY -> play()
+            ACTION_PREPARE_NEURAL -> prepareNeuralAudio()
             ACTION_PAUSE -> pause()
             ACTION_NEXT -> move(+1)
             ACTION_PREVIOUS -> move(-1)
@@ -181,16 +185,21 @@ class ReadingService : Service() {
         }
         neuralExecutor.execute {
             try {
+                val bookId = ReadingSession.bookId
                 var index = startIndex
                 while (index < ReadingSession.chunkCount() && isNeuralRequestActive(requestId)) {
                     val chunk = ReadingSession.chunkAt(index) ?: break
-                    val audio = neuralTts.generate(chunk.text, ReadingSession.speechRate)
-                    val improvedSamples = NeuralAudioProcessor.improve(audio.samples, audio.sampleRate)
-                    check(improvedSamples.isNotEmpty()) { "O modelo não gerou amostras de áudio." }
+                    val audio = getOrCreateNeuralAudio(
+                        bookId = bookId,
+                        chunkIndex = index,
+                        text = chunk.text,
+                        speechRate = ReadingSession.speechRate,
+                    )
+                    check(audio.samples.isNotEmpty()) { "O modelo não gerou amostras de áudio." }
                     if (!offerNeuralItem(
                             requestId,
                             queue,
-                            NeuralQueueItem.Audio(index, improvedSamples, audio.sampleRate),
+                            NeuralQueueItem.Audio(index, audio.samples, audio.sampleRate),
                         )
                     ) {
                         return@execute
@@ -206,6 +215,69 @@ class ReadingService : Service() {
                 }
             }
         }
+    }
+
+    private fun prepareNeuralAudio() {
+        if (!ReadingSession.hasContent() || !usesEmbeddedNeuralVoice()) {
+            stopSelf()
+            return
+        }
+        val warmId = ++prewarmRequestId
+        val bookId = ReadingSession.bookId
+        val startIndex = ReadingSession.state.value.currentChunkIndex
+        val speechRate = ReadingSession.speechRate
+        val indices = prewarmIndices(startIndex)
+
+        neuralExecutor.execute {
+            try {
+                for (index in indices) {
+                    if (
+                        warmId != prewarmRequestId ||
+                        playWhenReady ||
+                        bookId != ReadingSession.bookId
+                    ) {
+                        break
+                    }
+                    val chunk = ReadingSession.chunkAt(index) ?: break
+                    getOrCreateNeuralAudio(
+                        bookId = bookId,
+                        chunkIndex = index,
+                        text = chunk.text,
+                        speechRate = speechRate,
+                    )
+                }
+            } finally {
+                mainHandler.post {
+                    if (warmId == prewarmRequestId && !playWhenReady) stopSelf()
+                }
+            }
+        }
+    }
+
+    private fun prewarmIndices(startIndex: Int): List<Int> {
+        val pages = linkedSetOf<Int>()
+        val indices = mutableListOf<Int>()
+        var index = startIndex
+        while (index < ReadingSession.chunkCount() && indices.size < NEURAL_PREWARM_MAX_CHUNKS) {
+            val chunk = ReadingSession.chunkAt(index) ?: break
+            if (chunk.pageIndex !in pages && pages.size >= NEURAL_PREWARM_PAGES) break
+            pages += chunk.pageIndex
+            indices += index
+            index += 1
+        }
+        return indices
+    }
+
+    private fun getOrCreateNeuralAudio(
+        bookId: String,
+        chunkIndex: Int,
+        text: String,
+        speechRate: Float,
+    ): NeuralAudio {
+        neuralAudioCache.load(bookId, chunkIndex, text, speechRate)?.let { return it }
+        val generated = neuralTts.generate(text, speechRate)
+        neuralAudioCache.save(bookId, chunkIndex, text, speechRate, generated)
+        return generated
     }
 
     private fun consumeNeuralQueue(
@@ -381,6 +453,7 @@ class ReadingService : Service() {
 
     private fun stopReading() {
         playWhenReady = false
+        prewarmRequestId += 1
         tts?.stop()
         cancelNeuralPlayback()
         ReadingSession.setStatus(PlaybackStatus.STOPPED)
@@ -464,6 +537,7 @@ class ReadingService : Service() {
     }
 
     override fun onDestroy() {
+        prewarmRequestId += 1
         cancelNeuralPlayback()
         tts?.stop()
         tts?.shutdown()
@@ -479,8 +553,11 @@ class ReadingService : Service() {
         private const val NOTIFICATION_ID = 41
         private const val NEURAL_QUEUE_CAPACITY = 8
         private const val NEURAL_PREBUFFER_CHUNKS = 2
+        private const val NEURAL_PREWARM_PAGES = 3
+        private const val NEURAL_PREWARM_MAX_CHUNKS = 18
         private const val NEURAL_QUEUE_WAIT_MS = 200L
         private const val ACTION_PLAY = "com.leitorlocal.PLAY"
+        private const val ACTION_PREPARE_NEURAL = "com.leitorlocal.PREPARE_NEURAL"
         private const val ACTION_PAUSE = "com.leitorlocal.PAUSE"
         private const val ACTION_NEXT = "com.leitorlocal.NEXT"
         private const val ACTION_PREVIOUS = "com.leitorlocal.PREVIOUS"
@@ -491,6 +568,10 @@ class ReadingService : Service() {
             context,
             Intent(context, ReadingService::class.java).setAction(ACTION_PLAY),
         )
+
+        fun prepareNeural(context: Context) {
+            runCatching { send(context, ACTION_PREPARE_NEURAL) }
+        }
 
         fun pause(context: Context) = send(context, ACTION_PAUSE)
         fun next(context: Context) = send(context, ACTION_NEXT)

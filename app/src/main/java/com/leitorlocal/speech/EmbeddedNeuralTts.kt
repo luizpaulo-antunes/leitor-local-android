@@ -8,7 +8,6 @@ import android.os.Handler
 import android.os.Looper
 import com.github.csukuangfj.piper.phonemize.piperPhonemizeInitialize
 import com.github.csukuangfj.piper.phonemize.piperPhonemizeText
-import com.k2fsa.sherpa.onnx.GeneratedAudio
 import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
@@ -17,8 +16,9 @@ import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 
 class EmbeddedNeuralTts(private val context: Context) {
     private var engine: OfflineTts? = null
+    private val speechEnhancer = NeuralSpeechEnhancer(context)
 
-    fun generate(text: String, speed: Float): GeneratedAudio {
+    fun generate(text: String, speed: Float): NeuralAudio {
         val tts = engine ?: createEngine().also { engine = it }
         val phonemes = piperPhonemizeText(text, tts.lang().ifEmpty { "pt-br" })
             ?: error("O fonemizador não conseguiu preparar o texto em português.")
@@ -27,7 +27,7 @@ class EmbeddedNeuralTts(private val context: Context) {
         } finally {
             phonemes.close()
         }
-        return tts.generateWithConfig(
+        val generated = tts.generateWithConfig(
             text = "",
             config = GenerationConfig(
                 sid = 0,
@@ -36,9 +36,11 @@ class EmbeddedNeuralTts(private val context: Context) {
                 phonemeCodepoints = codepoints,
             ),
         )
+        return speechEnhancer.enhance(generated.samples, generated.sampleRate)
     }
 
     fun release() {
+        speechEnhancer.release()
         engine?.release()
         engine = null
     }

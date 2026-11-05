@@ -9,11 +9,11 @@ API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.5.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.6.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.5.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.6.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -40,6 +40,8 @@ estão disponíveis neste repositório.
 - Mantém um cache local do texto processado para reabrir livros sem reler todas as páginas.
 - Exibe o trecho atual em modo de foco, sobre a página suavemente desfocada.
 - Inclui a voz neural brasileira Miro, executada offline pelo Sherpa-ONNX.
+- Remove ruído da voz Miro com um segundo modelo neural executado no aparelho.
+- Prepara e guarda localmente as próximas páginas em áudio tratado para iniciar e continuar a leitura com menos espera.
 
 ## Voz neural offline incluída
 
@@ -48,16 +50,19 @@ Na tela do livro, abra o seletor **Voz** e escolha
 é necessário instalar outro aplicativo, baixar arquivos adicionais ou alterar
 as configurações do Android.
 
-A primeira reprodução com Miro pode demorar alguns segundos enquanto o motor é
-preparado. Depois disso, a síntese funciona no próprio aparelho e não envia o
-texto do livro para a internet.
+Ao abrir um livro com Miro selecionado, o aplicativo já começa a preparar em
+segundo plano até três páginas a partir da posição atual. Cada trecho é
+sintetizado, passa pela redução neural de ruído e fica em um cache local. Se
+você tocar em reproduzir antes do fim, a leitura recebe prioridade e o cache
+continua sendo abastecido adiante durante a reprodução. O cache de áudio é
+limitado a 192 MB e o conteúdo do livro não é enviado para a internet.
 
-O APK com a voz neural tem aproximadamente 129 MB e suporta aparelhos ARM64 e
+O APK com a voz neural tem aproximadamente 145 MB e suporta aparelhos ARM64 e
 ARM32. O modelo Miro possui licença CC BY-NC-SA 4.0 e, portanto, esta distribuição
 é destinada a uso pessoal e não comercial. Consulte `THIRD_PARTY_NOTICES.md`.
 
-PDFs formados apenas por imagens ainda precisam de OCR. O suporte a ML Kit e a
-voz neural Piper offline são as próximas extensões planejadas.
+PDFs formados apenas por imagens ainda precisam de OCR. O suporte a OCR local é
+uma extensão planejada.
 
 ## Para desenvolvedores
 

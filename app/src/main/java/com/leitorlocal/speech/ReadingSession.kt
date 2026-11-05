@@ -14,6 +14,8 @@ object ReadingSession {
 
     var title: String = "Leitor Local"
         private set
+    var bookId: String = ""
+        private set
     var speechRate: Float = 1f
         private set
     var voiceName: String? = null
@@ -21,12 +23,14 @@ object ReadingSession {
 
     @Synchronized
     fun configure(
+        bookId: String,
         title: String,
         chunks: List<SpeechChunk>,
         startIndex: Int,
         speechRate: Float,
         voiceName: String?,
     ) {
+        this.bookId = bookId
         this.title = title
         this.chunks = chunks
         this.speechRate = speechRate

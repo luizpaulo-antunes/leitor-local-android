@@ -168,6 +168,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val restoredIndex = startIndex.coerceIn(0, book.chunks.lastIndex)
                 val currentState = mutableUiState.value
                 ReadingSession.configure(
+                    bookId = book.uri,
                     title = book.title,
                     chunks = book.chunks,
                     startIndex = restoredIndex,
@@ -185,6 +186,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     )
                 }
                 renderPage(book.uri, book.chunks[restoredIndex].pageIndex)
+                ReadingService.prepareNeural(getApplication())
             }.onFailure { failure ->
                 mutableUiState.update {
                     it.copy(

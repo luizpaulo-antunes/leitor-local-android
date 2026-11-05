@@ -29,3 +29,14 @@ Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0).
 O modelo pode ser usado livremente para fins pessoais e não comerciais. Seu uso
 comercial não é permitido pela licença atual. O aviso original do modelo também
 é preservado nos assets do aplicativo.
+
+## GTCRN Speech Enhancement
+
+O aplicativo inclui o modelo `gtcrn_simple.onnx` para redução offline de ruído
+na voz sintetizada. O modelo deriva da implementação GTCRN de Rong Xiaobin,
+distribuída sob a licença MIT, e foi empacotado para o Sherpa-ONNX pelo projeto
+k2-fsa.
+
+- Projeto original: https://github.com/Xiaobin-Rong/gtcrn
+- Modelo para Sherpa-ONNX: https://github.com/k2-fsa/sherpa-onnx/releases/tag/speech-enhancement-models
+- Licença: https://github.com/Xiaobin-Rong/gtcrn/blob/main/LICENSE
