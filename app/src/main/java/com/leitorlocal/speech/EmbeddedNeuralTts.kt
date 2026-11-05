@@ -6,31 +6,37 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
+import com.github.csukuangfj.piper.phonemize.piperPhonemizeInitialize
+import com.github.csukuangfj.piper.phonemize.piperPhonemizeText
+import com.k2fsa.sherpa.onnx.GeneratedAudio
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
-import java.io.File
 
 class EmbeddedNeuralTts(private val context: Context) {
     private var engine: OfflineTts? = null
 
-    fun generateStreaming(
-        text: String,
-        speed: Float,
-        onSamples: (FloatArray) -> Boolean,
-    ) {
+    fun generate(text: String, speed: Float): GeneratedAudio {
         val tts = engine ?: createEngine().also { engine = it }
-        tts.generateWithCallback(
-            text = text,
-            sid = 0,
-            speed = speed.coerceIn(0.6f, 1.6f),
-        ) { samples ->
-            if (onSamples(samples)) 1 else 0
+        val phonemes = piperPhonemizeText(text, tts.lang().ifEmpty { "pt-br" })
+            ?: error("O fonemizador não conseguiu preparar o texto em português.")
+        val codepoints = try {
+            Array(phonemes.numSentences) { index -> phonemes.getPhonemes(index) }
+        } finally {
+            phonemes.close()
         }
+        return tts.generateWithConfig(
+            text = "",
+            config = GenerationConfig(
+                sid = 0,
+                speed = speed.coerceIn(0.6f, 1.6f),
+                silenceScale = 0.22f,
+                phonemeCodepoints = codepoints,
+            ),
+        )
     }
-
-    fun sampleRate(): Int = (engine ?: createEngine().also { engine = it }).sampleRate()
 
     fun release() {
         engine?.release()
@@ -38,13 +44,13 @@ class EmbeddedNeuralTts(private val context: Context) {
     }
 
     private fun createEngine(): OfflineTts {
-        val dataDirectory = prepareEspeakData()
+        piperPhonemizeInitialize(context.applicationContext)
         val config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(
                 vits = OfflineTtsVitsModelConfig(
                     model = "$MODEL_DIRECTORY/$MODEL_FILE",
                     tokens = "$MODEL_DIRECTORY/tokens.txt",
-                    dataDir = dataDirectory.absolutePath,
+                    dataDir = "",
                     noiseScale = 0.667f,
                     noiseScaleW = 0.8f,
                     lengthScale = 1.0f,
@@ -57,34 +63,6 @@ class EmbeddedNeuralTts(private val context: Context) {
             silenceScale = 0.22f,
         )
         return OfflineTts(assetManager = context.assets, config = config)
-    }
-
-    private fun prepareEspeakData(): File {
-        val root = File(context.filesDir, "neural_voice_miro_v1")
-        val dataDirectory = File(root, "espeak-ng-data")
-        val marker = File(root, ".ready")
-        if (marker.isFile && File(dataDirectory, "phontab").isFile) return dataDirectory
-
-        root.deleteRecursively()
-        dataDirectory.mkdirs()
-        copyAssetDirectory("$MODEL_DIRECTORY/espeak-ng-data", dataDirectory)
-        marker.writeText("1")
-        return dataDirectory
-    }
-
-    private fun copyAssetDirectory(assetPath: String, destination: File) {
-        val children = context.assets.list(assetPath).orEmpty()
-        if (children.isEmpty()) {
-            destination.parentFile?.mkdirs()
-            context.assets.open(assetPath).use { input ->
-                destination.outputStream().use(input::copyTo)
-            }
-            return
-        }
-        destination.mkdirs()
-        children.forEach { child ->
-            copyAssetDirectory("$assetPath/$child", File(destination, child))
-        }
     }
 
     companion object {
@@ -150,27 +128,41 @@ class NeuralAudioPlayer {
         }
     }
 
-    @Synchronized
     fun write(samples: FloatArray): Boolean {
-        val current = track ?: return false
         if (samples.isEmpty()) return true
-        val pcm = ShortArray(samples.size) { index ->
-            (samples[index].coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
-        }
         var offset = 0
-        while (offset < pcm.size) {
-            val count = current.write(
-                pcm,
-                offset,
-                pcm.size - offset,
-                AudioTrack.WRITE_BLOCKING,
-            )
+        while (offset < samples.size) {
+            val current = synchronized(this) { track } ?: return false
+            val blockSize = minOf(PLAYBACK_BLOCK_SAMPLES, samples.size - offset)
+            val pcm = ShortArray(blockSize) { index ->
+                (samples[offset + index].coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+            }
+            val count = runCatching {
+                current.write(
+                    pcm,
+                    0,
+                    pcm.size,
+                    AudioTrack.WRITE_BLOCKING,
+                )
+            }.getOrElse { failure ->
+                synchronized(this) {
+                    if (track === current) fail(failure)
+                }
+                return false
+            }
             if (count <= 0) {
-                fail(IllegalStateException("Falha $count ao enviar o áudio neural."))
+                synchronized(this) {
+                    if (track === current) {
+                        fail(IllegalStateException("Falha $count ao enviar o áudio neural."))
+                    }
+                }
                 return false
             }
             offset += count
-            framesWritten += count
+            synchronized(this) {
+                if (track !== current) return false
+                framesWritten += count
+            }
         }
         return true
     }
@@ -217,5 +209,9 @@ class NeuralAudioPlayer {
             if (current.playState != AudioTrack.PLAYSTATE_STOPPED) current.stop()
         }
         current.release()
+    }
+
+    companion object {
+        private const val PLAYBACK_BLOCK_SAMPLES = 4096
     }
 }

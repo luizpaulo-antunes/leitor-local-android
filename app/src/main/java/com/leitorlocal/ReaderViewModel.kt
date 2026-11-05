@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.core.net.toUri
 import com.leitorlocal.data.ReaderPreferences
+import com.leitorlocal.data.BookCoverStore
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.ReaderUiState
 import com.leitorlocal.model.LibraryBook
@@ -27,6 +28,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val parser = PdfBookParser(application)
     private val renderer = PdfPageRenderer(application)
     private val preferences = ReaderPreferences(application)
+    private val coverStore = BookCoverStore(application)
     private val voiceCatalog = TtsVoiceCatalog(application)
     private val savedSettings = preferences.settings()
     private val mutableUiState = MutableStateFlow(
@@ -45,6 +47,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     init {
         observePlayback()
         refreshVoices()
+        refreshLibraryCovers()
     }
 
     fun openBook(uri: Uri, title: String) {
@@ -94,6 +97,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun clearError() {
         mutableUiState.update { it.copy(error = null) }
+        if (ReadingSession.state.value.status == PlaybackStatus.ERROR) {
+            ReadingSession.setStatus(PlaybackStatus.PAUSED)
+        }
     }
 
     fun refreshVoices() {
@@ -156,6 +162,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }.onSuccess { book ->
                 preferences.saveBook(book.uri, book.title, book.chunks.size, book.pageCount)
+                runCatching { coverStore.ensureCover(book.uri.toUri()) }
+                    .getOrNull()
+                    ?.let { preferences.saveCover(book.uri, it) }
                 val restoredIndex = startIndex.coerceIn(0, book.chunks.lastIndex)
                 val currentState = mutableUiState.value
                 ReadingSession.configure(
@@ -200,6 +209,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 mutableUiState.update { it.copy(library = preferences.library()) }
                 if (page != lastRenderedPage) renderPage(book.uri, page)
             }
+        }
+    }
+
+    private fun refreshLibraryCovers() {
+        viewModelScope.launch {
+            preferences.library()
+                .filter { it.coverPath.isNullOrBlank() }
+                .forEach { book ->
+                    runCatching { coverStore.ensureCover(book.uri.toUri()) }
+                        .getOrNull()
+                        ?.let { path ->
+                            preferences.saveCover(book.uri, path)
+                            mutableUiState.update { it.copy(library = preferences.library()) }
+                        }
+                }
         }
     }
 

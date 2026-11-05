@@ -18,6 +18,7 @@ data class BookContent(
 data class LibraryBook(
     val uri: String,
     val title: String,
+    val coverPath: String? = null,
     val chunkIndex: Int,
     val totalChunks: Int,
     val pageCount: Int,

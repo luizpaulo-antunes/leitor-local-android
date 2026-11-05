@@ -38,6 +38,7 @@ class ReaderPreferences(context: Context) {
         val updated = LibraryBook(
             uri = uri,
             title = title,
+            coverPath = existing?.coverPath,
             chunkIndex = existing?.chunkIndex?.coerceIn(0, (totalChunks - 1).coerceAtLeast(0)) ?: 0,
             totalChunks = totalChunks,
             pageCount = pageCount,
@@ -56,6 +57,15 @@ class ReaderPreferences(context: Context) {
         books[index] = books[index].copy(lastOpenedAt = System.currentTimeMillis())
         writeLibrary(books)
         preferences.edit { putString(KEY_ACTIVE_URI, uri) }
+    }
+
+    @Synchronized
+    fun saveCover(uri: String, coverPath: String) {
+        val books = readLibrary().toMutableList()
+        val index = books.indexOfFirst { it.uri == uri }
+        if (index < 0) return
+        books[index] = books[index].copy(coverPath = coverPath)
+        writeLibrary(books)
     }
 
     @Synchronized
@@ -91,6 +101,7 @@ class ReaderPreferences(context: Context) {
                     LibraryBook(
                         uri = uri,
                         title = item.optString("title", "Livro.pdf"),
+                        coverPath = item.optString("coverPath").takeIf(String::isNotBlank),
                         chunkIndex = item.optInt("chunkIndex", 0).coerceAtLeast(0),
                         totalChunks = item.optInt("totalChunks", 0).coerceAtLeast(0),
                         pageCount = item.optInt("pageCount", 0).coerceAtLeast(0),
@@ -108,6 +119,7 @@ class ReaderPreferences(context: Context) {
                 JSONObject()
                     .put("uri", book.uri)
                     .put("title", book.title)
+                    .put("coverPath", book.coverPath ?: "")
                     .put("chunkIndex", book.chunkIndex)
                     .put("totalChunks", book.totalChunks)
                     .put("pageCount", book.pageCount)
@@ -127,6 +139,7 @@ class ReaderPreferences(context: Context) {
         val legacy = LibraryBook(
             uri = uri,
             title = preferences.getString(LEGACY_TITLE, "Livro.pdf") ?: "Livro.pdf",
+            coverPath = null,
             chunkIndex = preferences.getInt(LEGACY_CHUNK, 0).coerceAtLeast(0),
             totalChunks = 0,
             pageCount = 0,

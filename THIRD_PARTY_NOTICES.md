@@ -8,6 +8,15 @@ Next-gen Kaldi e distribuído sob a licença Apache 2.0.
 - Projeto: https://github.com/k2-fsa/sherpa-onnx
 - Licença: https://github.com/k2-fsa/sherpa-onnx/blob/master/LICENSE
 
+## Piper Phonemize
+
+O aplicativo inclui o Piper Phonemize 1.5.9 para converter o texto em português
+nos fonemas consumidos pelo modelo neural. A biblioteca é distribuída sob a
+licença GNU General Public License v3.0.
+
+- Projeto: https://github.com/csukuangfj/piper-phonemize
+- Licença: https://www.gnu.org/licenses/gpl-3.0.html
+
 ## Voz neural Miro pt-BR
 
 O aplicativo inclui o modelo `vits-piper-pt_BR-miro-high`, derivado do trabalho

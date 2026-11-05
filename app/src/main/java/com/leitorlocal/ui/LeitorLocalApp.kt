@@ -1,5 +1,6 @@
 package com.leitorlocal.ui
 
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +50,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInspectionMode
@@ -126,7 +128,7 @@ fun LeitorLocalApp(
 
                 if (state.isLoading) LoadingOverlay(state.loadingMessage)
 
-                state.error?.let { message ->
+                (state.error ?: state.playback.error)?.let { message ->
                     ErrorCard(
                         message = message,
                         onDismiss = viewModel::clearError,
@@ -190,32 +192,56 @@ private fun LibraryContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(books, key = LibraryBook::uri) { book ->
+                val coverBitmap = remember(book.coverPath) {
+                    book.coverPath?.let(BitmapFactory::decodeFile)
+                }
                 Card(
                     onClick = { onBookSelected(book) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        Text(
-                            text = book.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontFamily = FontFamily.Serif,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        LinearProgressIndicator(
-                            progress = { book.progress },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Row(Modifier.fillMaxWidth()) {
+                    Row(Modifier.fillMaxWidth().padding(12.dp)) {
+                        if (coverBitmap != null) {
+                            Image(
+                                bitmap = coverBitmap.asImageBitmap(),
+                                contentDescription = "Capa de ${book.title}",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .width(82.dp)
+                                    .height(116.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier
+                                    .width(82.dp)
+                                    .height(116.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text("Livro", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                        Column(Modifier.weight(1f).padding(start = 14.dp, top = 4.dp)) {
+                            Text(
+                                text = book.title,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontFamily = FontFamily.Serif,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(14.dp))
+                            LinearProgressIndicator(
+                                progress = { book.progress },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(8.dp))
                             Text(
                                 text = "${(book.progress * 100).roundToInt()}% lido",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.weight(1f),
                             )
                             if (book.pageCount > 0) {
                                 Text(
