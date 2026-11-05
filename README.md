@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.10.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.10.1.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.10.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.10.1.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -40,6 +40,7 @@ estão disponíveis neste repositório.
 - Identifica e prioriza vozes em português de alta qualidade instaladas no aparelho.
 - Mantém um cache local do texto processado para reabrir livros sem reler todas as páginas.
 - Exibe o trecho atual em modo de foco, sobre a página suavemente desfocada.
+- Usa um painel glassmórfico translúcido, com blur gaussiano, borda e sombra adaptadas aos temas claro e escuro.
 - Destaca e acompanha automaticamente cada palavra durante a narração.
 - Mantém a página como foco principal e reúne voz e velocidade em ajustes recolhíveis.
 - Mantém a tela ligada enquanto o leitor está visível e narrando, liberando-a ao pausar ou sair.

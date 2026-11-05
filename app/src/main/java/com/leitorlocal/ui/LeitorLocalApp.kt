@@ -1,6 +1,7 @@
 package com.leitorlocal.ui
 
 import android.graphics.BitmapFactory
+import android.os.Build
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.background
@@ -71,8 +72,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
@@ -84,6 +88,8 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.paneTitle
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.buildAnnotatedString
@@ -530,6 +536,9 @@ private fun ReaderPage(
     isPlaying: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    // RenderEffect (usado por Modifier.blur) existe a partir do Android 12.
+    // Em aparelhos anteriores o scrim adaptativo do overlay mantém o foco e o contraste.
+    val supportsGaussianBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     Card(
         modifier = modifier.border(
             width = 1.dp,
@@ -541,31 +550,39 @@ private fun ReaderPage(
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            val bitmap = state.pageBitmap
-            if (bitmap == null) {
-                CircularProgressIndicator(Modifier.align(Alignment.Center))
-            } else {
-                key(state.currentPage) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(rememberScrollState())
-                            .blur(if (isPlaying) 3.dp else 0.dp)
-                            .then(
-                                if (isPlaying) {
-                                    Modifier.clearAndSetSemantics { }
-                                } else {
-                                    Modifier
-                                },
-                            ),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Image(
-                            bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "Página ${state.currentPage + 1}",
-                            modifier = Modifier.fillMaxWidth(),
-                            contentScale = ContentScale.FillWidth,
-                        )
+            // A camada de blur fica limitada ao viewport, evitando uma textura GPU do tamanho
+            // de toda a página rolável.
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .blur(if (isPlaying && supportsGaussianBlur) 14.dp else 0.dp)
+                    .then(
+                        if (isPlaying) {
+                            Modifier.clearAndSetSemantics { }
+                        } else {
+                            Modifier
+                        },
+                    ),
+                contentAlignment = Alignment.TopCenter,
+            ) {
+                val bitmap = state.pageBitmap
+                if (bitmap == null) {
+                    CircularProgressIndicator(Modifier.align(Alignment.Center))
+                } else {
+                    key(state.currentPage) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState()),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Página ${state.currentPage + 1}",
+                                modifier = Modifier.fillMaxWidth(),
+                                contentScale = ContentScale.FillWidth,
+                            )
+                        }
                     }
                 }
             }
@@ -582,14 +599,72 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
         chunk.figure?.imagePath?.let(BitmapFactory::decodeFile)
     }
     val focusedBitmap = figureBitmap ?: state.pageBitmap.takeIf { chunk.figure != null }
+    val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val supportsGaussianBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val panelShape = RoundedCornerShape(26.dp)
+    val scrimAlpha = when {
+        !supportsGaussianBlur && isDark -> 0.30f
+        !supportsGaussianBlur -> 0.24f
+        isDark -> 0.22f
+        else -> 0.11f
+    }
+    val glassBackground = Brush.verticalGradient(
+        colors = when {
+            !supportsGaussianBlur && isDark -> listOf(
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
+            )
+            !supportsGaussianBlur -> listOf(
+                Color.White.copy(alpha = 0.96f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
+            )
+            isDark -> listOf(
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.80f),
+            )
+            else -> listOf(
+                Color.White.copy(alpha = 0.90f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.84f),
+            )
+        },
+    )
+    val glassBorder = Brush.linearGradient(
+        colors = if (isDark) {
+            listOf(
+                Color.White.copy(alpha = 0.34f),
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.26f),
+                Color.White.copy(alpha = 0.10f),
+            )
+        } else {
+            listOf(
+                Color.White.copy(alpha = 0.94f),
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
+                Color.White.copy(alpha = 0.52f),
+            )
+        },
+    )
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.14f))
+            .background(Color.Black.copy(alpha = scrimAlpha))
+            .background(
+                Brush.radialGradient(
+                    colors = listOf(
+                        MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.07f else 0.05f),
+                        Color.Transparent,
+                    ),
+                    radius = 1_100f,
+                ),
+            )
             .padding(horizontal = 14.dp, vertical = 12.dp),
         contentAlignment = Alignment.Center,
     ) {
+        val panelMaxHeight = maxHeight * if (chunk.figure != null) 0.94f else 0.84f
         key(state.playback.currentChunkIndex) {
             val focusScrollState = rememberScrollState()
             var viewportHeightPx by remember { mutableIntStateOf(0) }
@@ -626,95 +701,121 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
                 }
             }
 
-            Card(
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .widthIn(max = 640.dp)
-                    .fillMaxHeight(if (chunk.figure != null) 0.94f else 0.84f),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.97f),
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                shape = RoundedCornerShape(22.dp),
+                    .heightIn(min = 220.dp, max = panelMaxHeight)
+                    .shadow(
+                        elevation = 16.dp,
+                        shape = panelShape,
+                        clip = false,
+                    )
+                    .clip(panelShape)
+                    .background(glassBackground)
+                    .border(width = 1.dp, brush = glassBorder, shape = panelShape)
+                    .onSizeChanged { viewportHeightPx = it.height }
+                    .semantics { paneTitle = "Trecho em leitura" },
             ) {
+                // Um brilho suave no topo reforça o vidro sem reduzir a legibilidade.
                 Box(
+                    modifier = Modifier
+                        .matchParentSize()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color.White.copy(alpha = if (isDark) 0.035f else 0.14f),
+                                    Color.Transparent,
+                                ),
+                                endY = 420f,
+                            ),
+                        ),
+                )
+                Column(
                     Modifier
-                        .fillMaxSize()
-                        .onSizeChanged { viewportHeightPx = it.height },
+                        .fillMaxWidth()
+                        .verticalScroll(focusScrollState)
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
                 ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .verticalScroll(focusScrollState)
-                            .padding(horizontal = 20.dp, vertical = 18.dp),
-                    ) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    Surface(
+                        modifier = Modifier.border(
+                            width = 0.5.dp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(
+                                alpha = if (isDark) 0.22f else 0.12f,
+                            ),
                             shape = CircleShape,
-                        ) {
-                            Text(
-                                text = when {
-                                    state.playback.status == PlaybackStatus.PREPARING && chunk.figure != null ->
-                                        "Preparando descrição da figura…"
-                                    state.playback.status == PlaybackStatus.PREPARING ->
-                                        "Preparando voz…"
-                                    chunk.figure != null -> "Figura · lendo agora"
-                                    else -> "Lendo agora"
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            )
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        if (focusedBitmap != null && chunk.figure != null) {
-                            Image(
-                                bitmap = focusedBitmap.asImageBitmap(),
-                                contentDescription = chunk.figure.caption.ifBlank {
-                                    chunk.figure.alternativeText.ifBlank { "Figura do livro" }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(
-                                        (focusedBitmap.width.toFloat() / focusedBitmap.height)
-                                            .coerceIn(0.55f, 2.4f),
-                                    )
-                                    .clip(RoundedCornerShape(14.dp)),
-                                contentScale = ContentScale.Fit,
-                            )
-                            Spacer(Modifier.height(14.dp))
-                        }
-                        val highlightColor = MaterialTheme.colorScheme.primary
-                        val highlightedText = buildAnnotatedString {
-                            append(chunk.text)
-                            if (
-                                activeWordEnd > activeWordStart &&
-                                activeWordStart >= 0 &&
-                                activeWordEnd <= chunk.text.length
-                            ) {
-                                addStyle(
-                                    SpanStyle(
-                                        color = highlightColor,
-                                        background = highlightColor.copy(alpha = 0.18f),
-                                    ),
-                                    activeWordStart,
-                                    activeWordEnd,
-                                )
-                            }
-                        }
+                        ),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(
+                            alpha = if (supportsGaussianBlur) 0.76f else 0.94f,
+                        ),
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        shape = CircleShape,
+                    ) {
                         Text(
-                            text = highlightedText,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontFamily = FontFamily.Serif,
-                            lineHeight = MaterialTheme.typography.titleMedium.lineHeight * 1.18f,
-                            onTextLayout = { textLayout = it },
-                            modifier = Modifier.onGloballyPositioned { coordinates ->
-                                val contentTop = coordinates.positionInParent().y.roundToInt()
-                                if (textTopPx != contentTop) textTopPx = contentTop
+                            text = when {
+                                state.playback.status == PlaybackStatus.PREPARING && chunk.figure != null ->
+                                    "Preparando descrição da figura…"
+                                state.playback.status == PlaybackStatus.PREPARING ->
+                                    "Preparando voz…"
+                                chunk.figure != null -> "Figura · lendo agora"
+                                else -> "Lendo agora"
                             },
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                         )
                     }
+                    Spacer(Modifier.height(12.dp))
+                    if (focusedBitmap != null && chunk.figure != null) {
+                        Image(
+                            bitmap = focusedBitmap.asImageBitmap(),
+                            contentDescription = chunk.figure.caption.ifBlank {
+                                chunk.figure.alternativeText.ifBlank { "Figura do livro" }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(
+                                    (focusedBitmap.width.toFloat() / focusedBitmap.height)
+                                        .coerceIn(0.55f, 2.4f),
+                                )
+                                .clip(RoundedCornerShape(14.dp)),
+                            contentScale = ContentScale.Fit,
+                        )
+                        Spacer(Modifier.height(14.dp))
+                    }
+                    val activeWordColor = MaterialTheme.colorScheme.onPrimaryContainer
+                    val activeWordBackground = MaterialTheme.colorScheme.primaryContainer.copy(
+                        alpha = if (isDark) 0.92f else 0.82f,
+                    )
+                    val highlightedText = buildAnnotatedString {
+                        append(chunk.text)
+                        if (
+                            activeWordEnd > activeWordStart &&
+                            activeWordStart >= 0 &&
+                            activeWordEnd <= chunk.text.length
+                        ) {
+                            addStyle(
+                                SpanStyle(
+                                    color = activeWordColor,
+                                    background = activeWordBackground,
+                                ),
+                                activeWordStart,
+                                activeWordEnd,
+                            )
+                        }
+                    }
+                    Text(
+                        text = highlightedText,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontFamily = FontFamily.Serif,
+                        lineHeight = MaterialTheme.typography.titleMedium.lineHeight * 1.18f,
+                        onTextLayout = { textLayout = it },
+                        modifier = Modifier.onGloballyPositioned { coordinates ->
+                            val contentTop = coordinates.positionInParent().y.roundToInt()
+                            if (textTopPx != contentTop) textTopPx = contentTop
+                        },
+                    )
                 }
             }
         }
