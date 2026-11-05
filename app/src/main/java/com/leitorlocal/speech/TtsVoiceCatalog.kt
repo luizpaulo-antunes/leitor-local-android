@@ -21,7 +21,9 @@ class TtsVoiceCatalog(context: Context) {
             }
 
             val portuguese = tts.voices.orEmpty()
-                .filter { voice -> voice.locale.language == Locale.forLanguageTag("pt").language }
+                .filter { voice ->
+                    voice.locale.language == "pt" && voice.locale.country.equals("BR", ignoreCase = true)
+                }
                 .sortedWith(
                     compareBy(
                         { it.locale.country != "BR" },

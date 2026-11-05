@@ -10,17 +10,19 @@ object NeuralAudioProcessor {
         if (samples.isEmpty() || sampleRate <= 0) return samples
 
         val output = FloatArray(samples.size)
-        val cutoff = minOf(8_500f, sampleRate * 0.42f)
+        val cutoff = minOf(7_200f, sampleRate * 0.38f)
         val lowPassAlpha = (1.0 - exp(-2.0 * PI * cutoff / sampleRate)).toFloat()
         var previousInput = 0f
         var highPassed = 0f
         var lowPassed = 0f
+        var lowPassedSecondStage = 0f
 
         samples.forEachIndexed { index, input ->
             highPassed = input - previousInput + DC_BLOCK_FACTOR * highPassed
             previousInput = input
             lowPassed += lowPassAlpha * (highPassed - lowPassed)
-            output[index] = lowPassed
+            lowPassedSecondStage += lowPassAlpha * (lowPassed - lowPassedSecondStage)
+            output[index] = lowPassedSecondStage
         }
 
         var peak = 0f

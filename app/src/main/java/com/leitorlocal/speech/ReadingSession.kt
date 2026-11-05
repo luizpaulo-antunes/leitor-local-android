@@ -45,6 +45,10 @@ object ReadingSession {
 
     fun currentChunk(): SpeechChunk? = chunks.getOrNull(mutableState.value.currentChunkIndex)
 
+    fun chunkAt(index: Int): SpeechChunk? = chunks.getOrNull(index)
+
+    fun chunkCount(): Int = chunks.size
+
     fun hasContent(): Boolean = chunks.isNotEmpty()
 
     @Synchronized

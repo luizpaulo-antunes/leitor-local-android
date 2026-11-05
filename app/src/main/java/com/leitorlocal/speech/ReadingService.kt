@@ -20,7 +20,20 @@ import com.leitorlocal.R
 import com.leitorlocal.data.ReaderPreferences
 import com.leitorlocal.model.PlaybackStatus
 import java.util.Locale
+import java.util.concurrent.ArrayBlockingQueue
 import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+private sealed interface NeuralQueueItem {
+    data class Audio(
+        val chunkIndex: Int,
+        val samples: FloatArray,
+        val sampleRate: Int,
+    ) : NeuralQueueItem
+
+    data class Failure(val cause: Throwable) : NeuralQueueItem
+    object End : NeuralQueueItem
+}
 
 class ReadingService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -29,9 +42,11 @@ class ReadingService : Service() {
     private var isTtsReady = false
     private var playWhenReady = false
     private val neuralExecutor = Executors.newSingleThreadExecutor()
+    private val neuralPlaybackExecutor = Executors.newSingleThreadExecutor()
     private val neuralTts by lazy { EmbeddedNeuralTts(applicationContext) }
     private val neuralPlayer = NeuralAudioPlayer()
     @Volatile private var neuralRequestId = 0L
+    @Volatile private var neuralQueue: ArrayBlockingQueue<NeuralQueueItem>? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -59,7 +74,7 @@ class ReadingService : Service() {
             val engine = tts
             if (status != TextToSpeech.SUCCESS || engine == null) {
                 if (usesEmbeddedNeuralVoice()) {
-                    if (playWhenReady) speakCurrent()
+                    return@TextToSpeech
                 } else {
                     ReadingSession.setStatus(PlaybackStatus.ERROR, "O mecanismo de voz não pôde ser iniciado.")
                     stopSelf()
@@ -77,7 +92,7 @@ class ReadingService : Service() {
             engine.setOnUtteranceProgressListener(listener)
             isTtsReady = true
             applySettings()
-            if (playWhenReady) speakCurrent()
+            if (playWhenReady && !usesEmbeddedNeuralVoice()) speakCurrent()
         }
     }
 
@@ -146,42 +161,158 @@ class ReadingService : Service() {
     }
 
     private fun speakCurrentWithNeuralVoice() {
-        val chunk = ReadingSession.currentChunk() ?: return
+        val startIndex = ReadingSession.state.value.currentChunkIndex
+        if (ReadingSession.chunkAt(startIndex) == null) return
         tts?.stop()
-        neuralPlayer.stop()
-        val requestId = ++neuralRequestId
+        cancelNeuralPlayback()
+        val requestId = neuralRequestId
+        val queue = ArrayBlockingQueue<NeuralQueueItem>(NEURAL_QUEUE_CAPACITY)
+        neuralQueue = queue
         ReadingSession.setStatus(PlaybackStatus.PREPARING)
         updateNotification(true)
 
-        neuralExecutor.execute {
-            runCatching {
-                if (requestId != neuralRequestId || !playWhenReady) return@runCatching
-                val audio = neuralTts.generate(chunk.text, ReadingSession.speechRate)
-                val improvedSamples = NeuralAudioProcessor.improve(audio.samples, audio.sampleRate)
-                check(improvedSamples.isNotEmpty()) { "O modelo não gerou amostras de áudio." }
-                if (requestId != neuralRequestId || !playWhenReady) return@runCatching
-                neuralPlayer.start(
-                    sampleRate = audio.sampleRate,
-                    onCompletion = ::handleChunkDone,
-                    onError = { failure ->
+        neuralPlaybackExecutor.execute {
+            runCatching { consumeNeuralQueue(requestId, queue) }
+                .onFailure { failure ->
+                    if (isNeuralRequestActive(requestId)) {
                         handleTtsError(neuralErrorMessage("reproduzir", failure))
-                    },
-                )
-                mainHandler.post {
-                    if (requestId == neuralRequestId && playWhenReady) {
-                        ReadingSession.setStatus(PlaybackStatus.PLAYING)
                     }
                 }
-                if (neuralPlayer.write(improvedSamples) && requestId == neuralRequestId && playWhenReady) {
-                    neuralPlayer.finish()
+        }
+        neuralExecutor.execute {
+            try {
+                var index = startIndex
+                while (index < ReadingSession.chunkCount() && isNeuralRequestActive(requestId)) {
+                    val chunk = ReadingSession.chunkAt(index) ?: break
+                    val audio = neuralTts.generate(chunk.text, ReadingSession.speechRate)
+                    val improvedSamples = NeuralAudioProcessor.improve(audio.samples, audio.sampleRate)
+                    check(improvedSamples.isNotEmpty()) { "O modelo não gerou amostras de áudio." }
+                    if (!offerNeuralItem(
+                            requestId,
+                            queue,
+                            NeuralQueueItem.Audio(index, improvedSamples, audio.sampleRate),
+                        )
+                    ) {
+                        return@execute
+                    }
+                    index += 1
                 }
-            }.onFailure {
-                if (requestId == neuralRequestId) {
-                    handleTtsError(neuralErrorMessage("iniciar", it))
+                if (isNeuralRequestActive(requestId)) {
+                    offerNeuralItem(requestId, queue, NeuralQueueItem.End)
+                }
+            } catch (failure: Throwable) {
+                if (isNeuralRequestActive(requestId)) {
+                    offerNeuralItem(requestId, queue, NeuralQueueItem.Failure(failure))
                 }
             }
         }
     }
+
+    private fun consumeNeuralQueue(
+        requestId: Long,
+        queue: ArrayBlockingQueue<NeuralQueueItem>,
+    ) {
+        val buffered = mutableListOf<NeuralQueueItem.Audio>()
+        var pendingTerminal: NeuralQueueItem? = null
+        while (buffered.size < NEURAL_PREBUFFER_CHUNKS && pendingTerminal == null) {
+            when (val item = pollNeuralItem(requestId, queue) ?: return) {
+                is NeuralQueueItem.Audio -> buffered += item
+                else -> pendingTerminal = item
+            }
+        }
+
+        if (buffered.isEmpty()) {
+            handleNeuralTerminal(requestId, pendingTerminal ?: NeuralQueueItem.End)
+            return
+        }
+
+        val sampleRate = buffered.first().sampleRate
+        neuralPlayer.start(
+            sampleRate = sampleRate,
+            onCompletion = { handleNeuralBookDone(requestId) },
+            onError = { failure ->
+                if (requestId == neuralRequestId) {
+                    handleTtsError(neuralErrorMessage("reproduzir", failure))
+                }
+            },
+        )
+
+        buffered.forEach { audio ->
+            if (!playNeuralItem(requestId, audio, sampleRate)) return
+        }
+        pendingTerminal?.let {
+            handleNeuralTerminal(requestId, it)
+            return
+        }
+
+        while (isNeuralRequestActive(requestId)) {
+            when (val item = pollNeuralItem(requestId, queue) ?: return) {
+                is NeuralQueueItem.Audio -> {
+                    if (!playNeuralItem(requestId, item, sampleRate)) return
+                }
+                else -> {
+                    handleNeuralTerminal(requestId, item)
+                    return
+                }
+            }
+        }
+    }
+
+    private fun playNeuralItem(
+        requestId: Long,
+        item: NeuralQueueItem.Audio,
+        expectedSampleRate: Int,
+    ): Boolean {
+        if (!isNeuralRequestActive(requestId)) return false
+        check(item.sampleRate == expectedSampleRate) { "A taxa do áudio neural mudou durante a leitura." }
+        ReadingSession.setIndex(item.chunkIndex)
+        ReadingSession.setStatus(PlaybackStatus.PLAYING)
+        persistPosition()
+        return neuralPlayer.write(item.samples) && isNeuralRequestActive(requestId)
+    }
+
+    private fun handleNeuralTerminal(requestId: Long, item: NeuralQueueItem) {
+        if (!isNeuralRequestActive(requestId)) return
+        when (item) {
+            NeuralQueueItem.End -> neuralPlayer.finish()
+            is NeuralQueueItem.Failure -> handleTtsError(neuralErrorMessage("preparar", item.cause))
+            is NeuralQueueItem.Audio -> Unit
+        }
+    }
+
+    private fun handleNeuralBookDone(requestId: Long) {
+        if (!isNeuralRequestActive(requestId)) return
+        playWhenReady = false
+        neuralQueue = null
+        ReadingSession.setStatus(PlaybackStatus.STOPPED)
+        persistPosition()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun offerNeuralItem(
+        requestId: Long,
+        queue: ArrayBlockingQueue<NeuralQueueItem>,
+        item: NeuralQueueItem,
+    ): Boolean {
+        while (isNeuralRequestActive(requestId)) {
+            if (queue.offer(item, NEURAL_QUEUE_WAIT_MS, TimeUnit.MILLISECONDS)) return true
+        }
+        return false
+    }
+
+    private fun pollNeuralItem(
+        requestId: Long,
+        queue: ArrayBlockingQueue<NeuralQueueItem>,
+    ): NeuralQueueItem? {
+        while (isNeuralRequestActive(requestId)) {
+            queue.poll(NEURAL_QUEUE_WAIT_MS, TimeUnit.MILLISECONDS)?.let { return it }
+        }
+        return null
+    }
+
+    private fun isNeuralRequestActive(requestId: Long): Boolean =
+        requestId == neuralRequestId && playWhenReady
 
     private fun neuralErrorMessage(action: String, failure: Throwable): String {
         val detail = failure.message?.takeIf(String::isNotBlank)?.take(120)
@@ -268,6 +399,11 @@ class ReadingService : Service() {
     private fun cancelNeuralPlayback() {
         neuralRequestId += 1
         neuralPlayer.stop()
+        neuralQueue?.apply {
+            clear()
+            offer(NeuralQueueItem.End)
+        }
+        neuralQueue = null
     }
 
     private fun createNotificationChannel() {
@@ -334,12 +470,16 @@ class ReadingService : Service() {
         tts = null
         neuralExecutor.execute { neuralTts.release() }
         neuralExecutor.shutdown()
+        neuralPlaybackExecutor.shutdown()
         super.onDestroy()
     }
 
     companion object {
         private const val CHANNEL_ID = "book_reading"
         private const val NOTIFICATION_ID = 41
+        private const val NEURAL_QUEUE_CAPACITY = 8
+        private const val NEURAL_PREBUFFER_CHUNKS = 2
+        private const val NEURAL_QUEUE_WAIT_MS = 200L
         private const val ACTION_PLAY = "com.leitorlocal.PLAY"
         private const val ACTION_PAUSE = "com.leitorlocal.PAUSE"
         private const val ACTION_NEXT = "com.leitorlocal.NEXT"

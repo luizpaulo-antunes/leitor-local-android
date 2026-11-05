@@ -431,7 +431,7 @@ private fun ReaderContent(
             onVoiceSelected = onVoiceSelected,
         )
         Text(
-            text = "Miro neural funciona totalmente offline e já está incluída no aplicativo.",
+            text = "Miro neural funciona totalmente offline. A lista exibe somente vozes do português do Brasil (pt-BR).",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp),
