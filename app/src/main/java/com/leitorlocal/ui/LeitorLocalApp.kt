@@ -555,7 +555,7 @@ private fun ReaderPage(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .blur(if (isPlaying && supportsGaussianBlur) 14.dp else 0.dp)
+                    .blur(if (isPlaying && supportsGaussianBlur) 3.dp else 0.dp)
                     .then(
                         if (isPlaying) {
                             Modifier.clearAndSetSemantics { }
@@ -603,47 +603,47 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
     val supportsGaussianBlur = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
     val panelShape = RoundedCornerShape(26.dp)
     val scrimAlpha = when {
-        !supportsGaussianBlur && isDark -> 0.30f
-        !supportsGaussianBlur -> 0.24f
-        isDark -> 0.22f
-        else -> 0.11f
+        !supportsGaussianBlur && isDark -> 0.18f
+        !supportsGaussianBlur -> 0.06f
+        isDark -> 0.12f
+        else -> 0.03f
     }
     val glassBackground = Brush.verticalGradient(
         colors = when {
             !supportsGaussianBlur && isDark -> listOf(
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                Color.Black.copy(alpha = 0.84f),
             )
             !supportsGaussianBlur -> listOf(
-                Color.White.copy(alpha = 0.96f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.92f),
+                Color.White.copy(alpha = 0.78f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.68f),
             )
             isDark -> listOf(
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.80f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.78f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.74f),
+                Color.Black.copy(alpha = 0.62f),
             )
             else -> listOf(
-                Color.White.copy(alpha = 0.90f),
-                MaterialTheme.colorScheme.surface.copy(alpha = 0.86f),
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.84f),
+                Color.White.copy(alpha = 0.50f),
+                MaterialTheme.colorScheme.surface.copy(alpha = 0.44f),
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f),
             )
         },
     )
     val glassBorder = Brush.linearGradient(
         colors = if (isDark) {
             listOf(
-                Color.White.copy(alpha = 0.34f),
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.26f),
-                Color.White.copy(alpha = 0.10f),
+                Color.White.copy(alpha = 0.30f),
+                Color.White.copy(alpha = 0.14f),
+                Color.White.copy(alpha = 0.08f),
             )
         } else {
             listOf(
-                Color.White.copy(alpha = 0.94f),
-                MaterialTheme.colorScheme.primary.copy(alpha = 0.22f),
-                Color.White.copy(alpha = 0.52f),
+                Color.White.copy(alpha = 0.58f),
+                MaterialTheme.colorScheme.outline.copy(alpha = 0.18f),
+                Color.White.copy(alpha = 0.20f),
             )
         },
     )
@@ -655,7 +655,7 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
             .background(
                 Brush.radialGradient(
                     colors = listOf(
-                        MaterialTheme.colorScheme.primary.copy(alpha = if (isDark) 0.07f else 0.05f),
+                        Color.White.copy(alpha = if (isDark) 0.03f else 0.02f),
                         Color.Transparent,
                     ),
                     radius = 1_100f,
@@ -707,7 +707,7 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
                     .widthIn(max = 640.dp)
                     .heightIn(min = 220.dp, max = panelMaxHeight)
                     .shadow(
-                        elevation = 16.dp,
+                        elevation = 8.dp,
                         shape = panelShape,
                         clip = false,
                     )
@@ -724,7 +724,7 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
                         .background(
                             Brush.verticalGradient(
                                 colors = listOf(
-                                    Color.White.copy(alpha = if (isDark) 0.035f else 0.14f),
+                                    Color.White.copy(alpha = if (isDark) 0.025f else 0.06f),
                                     Color.Transparent,
                                 ),
                                 endY = 420f,
