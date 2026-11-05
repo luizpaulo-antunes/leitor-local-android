@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.leitorlocal.model.BookContent
 import com.leitorlocal.model.SpeechChunk
+import com.leitorlocal.data.BookCache
 import com.leitorlocal.text.TextPreprocessor
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
@@ -12,6 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class PdfBookParser(private val context: Context) {
+    private val cache = BookCache(context.applicationContext)
+
     init {
         PDFBoxResourceLoader.init(context.applicationContext)
     }
@@ -21,6 +24,10 @@ class PdfBookParser(private val context: Context) {
         title: String,
         onProgress: (current: Int, total: Int) -> Unit,
     ): BookContent = withContext(Dispatchers.IO) {
+        cache.load(uri, title)?.let { cached ->
+            onProgress(cached.pageCount, cached.pageCount)
+            return@withContext cached
+        }
         val input = context.contentResolver.openInputStream(uri)
             ?: error("Não foi possível abrir o PDF.")
 
@@ -65,7 +72,7 @@ class PdfBookParser(private val context: Context) {
                     pageCount = totalPages,
                     chunks = chunks,
                     pagesWithoutText = pagesWithoutText,
-                )
+                ).also(cache::save)
             }
         }
     }

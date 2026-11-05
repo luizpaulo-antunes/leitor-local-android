@@ -41,6 +41,7 @@ class ReadingService : Service() {
             ACTION_PAUSE -> pause()
             ACTION_NEXT -> move(+1)
             ACTION_PREVIOUS -> move(-1)
+            ACTION_RELOAD_ENGINE -> reloadEngine()
             ACTION_STOP -> stopReading()
         }
         return START_NOT_STICKY
@@ -69,6 +70,15 @@ class ReadingService : Service() {
             applySettings()
             if (playWhenReady) speakCurrent()
         }
+    }
+
+    private fun reloadEngine() {
+        playWhenReady = false
+        isTtsReady = false
+        tts?.stop()
+        tts?.shutdown()
+        tts = null
+        initializeTts()
     }
 
     private fun play() {
@@ -254,6 +264,7 @@ class ReadingService : Service() {
         private const val ACTION_PAUSE = "com.leitorlocal.PAUSE"
         private const val ACTION_NEXT = "com.leitorlocal.NEXT"
         private const val ACTION_PREVIOUS = "com.leitorlocal.PREVIOUS"
+        private const val ACTION_RELOAD_ENGINE = "com.leitorlocal.RELOAD_ENGINE"
         private const val ACTION_STOP = "com.leitorlocal.STOP"
 
         fun play(context: Context) = ContextCompat.startForegroundService(
@@ -264,6 +275,7 @@ class ReadingService : Service() {
         fun pause(context: Context) = send(context, ACTION_PAUSE)
         fun next(context: Context) = send(context, ACTION_NEXT)
         fun previous(context: Context) = send(context, ACTION_PREVIOUS)
+        fun reloadEngine(context: Context) = send(context, ACTION_RELOAD_ENGINE)
         fun stop(context: Context) = send(context, ACTION_STOP)
 
         private fun send(context: Context, action: String) {

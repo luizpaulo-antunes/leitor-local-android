@@ -11,6 +11,8 @@ class TtsVoiceCatalog(context: Context) {
     private var engine: TextToSpeech? = null
 
     fun load(onResult: (List<VoiceOption>) -> Unit) {
+        engine?.shutdown()
+        engine = null
         engine = TextToSpeech(appContext) { status ->
             val tts = engine
             if (status != TextToSpeech.SUCCESS || tts == null) {

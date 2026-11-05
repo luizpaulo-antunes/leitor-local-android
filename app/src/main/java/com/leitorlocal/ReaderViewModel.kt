@@ -42,7 +42,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         observePlayback()
-        loadVoices()
+        refreshVoices()
     }
 
     fun openBook(uri: Uri, title: String) {
@@ -94,7 +94,13 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         mutableUiState.update { it.copy(error = null) }
     }
 
-    private fun loadVoices() {
+    fun refreshVoices() {
+        if (
+            ReadingSession.hasContent() &&
+            ReadingSession.state.value.status != PlaybackStatus.PLAYING
+        ) {
+            ReadingService.reloadEngine(getApplication())
+        }
         voiceCatalog.load { voices ->
             mutableUiState.update { state ->
                 val saved = preferences.settings().voiceName
