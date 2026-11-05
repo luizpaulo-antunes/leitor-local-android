@@ -16,6 +16,8 @@ import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.leitorlocal.model.SpeechChunk
 import java.util.ArrayDeque
+import kotlin.math.log10
+import kotlin.math.roundToInt
 
 class EmbeddedNeuralTts(private val context: Context) {
     private var engine: OfflineTts? = null
@@ -125,6 +127,7 @@ class NeuralAudioPlayer {
     @Synchronized
     fun start(
         sampleRate: Int,
+        playbackAmplitudeGain: Float,
         onCompletion: () -> Unit,
         onError: (Throwable) -> Unit,
         onProgress: (chunk: SpeechChunk, wordStart: Int, wordEnd: Int) -> Unit,
@@ -160,7 +163,9 @@ class NeuralAudioPlayer {
             track = newTrack
             loudnessEnhancer = runCatching {
                 LoudnessEnhancer(newTrack.audioSessionId).apply {
-                    setTargetGain(NEURAL_VOLUME_BOOST_MILLIBELS)
+                    // Keep the boost in LoudnessEnhancer instead of multiplying PCM samples:
+                    // the effect can reduce its actual gain near peaks to avoid clipping.
+                    setTargetGain(amplitudeGainToMillibels(playbackAmplitudeGain))
                     enabled = true
                 }
             }.getOrNull()
@@ -315,7 +320,10 @@ class NeuralAudioPlayer {
     companion object {
         private const val PLAYBACK_BLOCK_SAMPLES = 4096
         private const val PROGRESS_INTERVAL_MILLIS = 60L
-        // 20 * log10(1.20) = 1.58 dB. LoudnessEnhancer receives millibels.
-        private const val NEURAL_VOLUME_BOOST_MILLIBELS = 158
+
+        internal fun amplitudeGainToMillibels(amplitudeGain: Float): Int {
+            val safeGain = amplitudeGain.coerceIn(1.0f, 2.0f)
+            return (20.0 * log10(safeGain.toDouble()) * 100.0).roundToInt()
+        }
     }
 }

@@ -48,7 +48,7 @@ estão disponíveis neste repositório.
 - Mostra anterior, pausar/continuar e próximo na notificação, tela bloqueada e painel de mídia.
 - Inclui as vozes neurais brasileiras Miro e Dii, executadas offline pelo Sherpa-ONNX.
 - Aplica um perfil próprio a cada voz: Miro recebe redução de ruído e Dii preserva o áudio original em 22,05 kHz.
-- Reforça o volume das vozes neurais em 20%, com limitador contra saturação.
+- Reforça o volume neural com limitador contra saturação; o Miro recebe 43% de ganho adicional para equilibrar a Dii.
 - Prepara e guarda localmente as próximas páginas em áudio tratado para iniciar e continuar a leitura com menos espera.
 - Reconhece progressivamente páginas escaneadas com OCR offline e mantém o resultado em cache.
 - Identifica figuras acompanhadas por legenda ou marcação de acessibilidade no PDF.

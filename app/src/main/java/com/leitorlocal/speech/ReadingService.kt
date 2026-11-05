@@ -194,7 +194,7 @@ class ReadingService : Service() {
         updateNotification(true)
 
         neuralPlaybackExecutor.execute {
-            runCatching { consumeNeuralQueue(requestId, queue) }
+            runCatching { consumeNeuralQueue(requestId, queue, voice) }
                 .onFailure { failure ->
                     if (isNeuralRequestActive(requestId)) {
                         handleTtsError(neuralErrorMessage("reproduzir", failure))
@@ -305,6 +305,7 @@ class ReadingService : Service() {
     private fun consumeNeuralQueue(
         requestId: Long,
         queue: ArrayBlockingQueue<NeuralQueueItem>,
+        voice: EmbeddedNeuralVoice,
     ) {
         val buffered = mutableListOf<NeuralQueueItem.Audio>()
         var pendingTerminal: NeuralQueueItem? = null
@@ -323,6 +324,7 @@ class ReadingService : Service() {
         val sampleRate = buffered.first().sampleRate
         neuralPlayer.start(
             sampleRate = sampleRate,
+            playbackAmplitudeGain = NeuralVoiceProfiles.forVoice(voice).playbackAmplitudeGain,
             onCompletion = { handleNeuralBookDone(requestId) },
             onError = { failure ->
                 if (requestId == neuralRequestId) {
