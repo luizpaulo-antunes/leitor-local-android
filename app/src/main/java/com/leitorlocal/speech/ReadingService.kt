@@ -119,6 +119,7 @@ class ReadingService : Service() {
     private fun applySettings() {
         val engine = tts ?: return
         engine.setSpeechRate(ReadingSession.speechRate)
+        engine.setPitch(0.98f)
         val requestedVoice = ReadingSession.voiceName
         if (requestedVoice != null) {
             engine.voices?.firstOrNull { it.name == requestedVoice }?.let(engine::setVoice)

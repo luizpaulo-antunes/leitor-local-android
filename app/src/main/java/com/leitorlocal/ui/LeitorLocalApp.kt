@@ -13,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -26,6 +28,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -53,9 +56,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.leitorlocal.ReaderViewModel
 import com.leitorlocal.model.PlaybackStatus
+import com.leitorlocal.model.LibraryBook
 import com.leitorlocal.model.ReaderUiState
 import com.leitorlocal.model.VoiceOption
 import java.util.Locale
+import kotlin.math.roundToInt
 
 private val LightColors = lightColorScheme(
     primary = Color(0xFF3B5B4B),
@@ -87,8 +92,10 @@ fun LeitorLocalApp(
         Scaffold(
             topBar = {
                 ReaderTopBar(
-                    title = state.book?.title ?: "Leitor Local",
-                    showOpenButton = state.book != null,
+                    title = if (state.showingLibrary) "Biblioteca" else state.book?.title ?: "Leitor Local",
+                    showLibraryButton = !state.showingLibrary,
+                    openButtonLabel = if (state.showingLibrary) "Adicionar PDF" else "Outro PDF",
+                    onShowLibrary = viewModel::showLibrary,
                     onOpenPdf = onOpenPdf,
                 )
             },
@@ -99,6 +106,11 @@ fun LeitorLocalApp(
                     .padding(padding),
             ) {
                 when {
+                    state.showingLibrary -> LibraryContent(
+                        books = state.library,
+                        onOpenPdf = onOpenPdf,
+                        onBookSelected = viewModel::openLibraryBook,
+                    )
                     state.book != null -> ReaderContent(
                         state = state,
                         onPlayPause = onPlayPause,
@@ -126,7 +138,13 @@ fun LeitorLocalApp(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ReaderTopBar(title: String, showOpenButton: Boolean, onOpenPdf: () -> Unit) {
+private fun ReaderTopBar(
+    title: String,
+    showLibraryButton: Boolean,
+    openButtonLabel: String,
+    onShowLibrary: () -> Unit,
+    onOpenPdf: () -> Unit,
+) {
     TopAppBar(
         title = {
             Text(
@@ -138,9 +156,79 @@ private fun ReaderTopBar(title: String, showOpenButton: Boolean, onOpenPdf: () -
             )
         },
         actions = {
-            if (showOpenButton) TextButton(onClick = onOpenPdf) { Text("Outro PDF") }
+            if (showLibraryButton) TextButton(onClick = onShowLibrary) { Text("Biblioteca") }
+            TextButton(onClick = onOpenPdf) { Text(openButtonLabel) }
         },
     )
+}
+
+@Composable
+private fun LibraryContent(
+    books: List<LibraryBook>,
+    onOpenPdf: () -> Unit,
+    onBookSelected: (LibraryBook) -> Unit,
+) {
+    if (books.isEmpty()) {
+        WelcomeContent(onOpenPdf)
+        return
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+    ) {
+        Text(
+            text = "Continue de onde parou",
+            style = MaterialTheme.typography.headlineSmall,
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(vertical = 12.dp),
+        )
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(books, key = LibraryBook::uri) { book ->
+                Card(
+                    onClick = { onBookSelected(book) },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        Text(
+                            text = book.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontFamily = FontFamily.Serif,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        LinearProgressIndicator(
+                            progress = { book.progress },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(Modifier.fillMaxWidth()) {
+                            Text(
+                                text = "${(book.progress * 100).roundToInt()}% lido",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (book.pageCount > 0) {
+                                Text(
+                                    text = "${book.pageCount} páginas",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            item { Spacer(Modifier.height(16.dp)) }
+        }
+    }
 }
 
 @Composable
@@ -179,6 +267,8 @@ private fun ReaderContent(
     onVoiceSelected: (String?) -> Unit,
 ) {
     val book = state.book ?: return
+    val readingProgress = if (book.chunks.size <= 1) 0f else
+        state.playback.currentChunkIndex.toFloat() / (book.chunks.size - 1)
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -214,8 +304,12 @@ private fun ReaderContent(
         Spacer(Modifier.height(10.dp))
         Text(
             text = "Página ${state.currentPage + 1} de ${book.pageCount}  ·  " +
-                "Trecho ${state.playback.currentChunkIndex + 1} de ${book.chunks.size}",
+                "${(readingProgress * 100).roundToInt()}% lido",
             style = MaterialTheme.typography.labelLarge,
+        )
+        LinearProgressIndicator(
+            progress = { readingProgress.coerceIn(0f, 1f) },
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
         )
         state.currentChunk?.let { chunk ->
             Text(
@@ -261,6 +355,12 @@ private fun ReaderContent(
             voices = state.voices,
             selectedName = state.selectedVoiceName,
             onVoiceSelected = onVoiceSelected,
+        )
+        Text(
+            text = "Dica: vozes marcadas como “alta qualidade” costumam soar mais naturais.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 6.dp),
         )
         Spacer(Modifier.height(12.dp))
     }

@@ -15,6 +15,22 @@ data class BookContent(
     val pagesWithoutText: Int,
 )
 
+data class LibraryBook(
+    val uri: String,
+    val title: String,
+    val chunkIndex: Int,
+    val totalChunks: Int,
+    val pageCount: Int,
+    val lastOpenedAt: Long,
+) {
+    val progress: Float
+        get() = if (totalChunks <= 1) {
+            if (chunkIndex > 0) 1f else 0f
+        } else {
+            (chunkIndex.toFloat() / (totalChunks - 1)).coerceIn(0f, 1f)
+        }
+}
+
 enum class PlaybackStatus {
     STOPPED,
     PLAYING,
@@ -33,6 +49,8 @@ data class VoiceOption(
     val label: String,
     val localeTag: String,
     val requiresNetwork: Boolean,
+    val quality: Int,
+    val isHighQuality: Boolean,
 )
 
 data class ReaderUiState(
@@ -44,6 +62,8 @@ data class ReaderUiState(
     val voices: List<VoiceOption> = emptyList(),
     val selectedVoiceName: String? = null,
     val speechRate: Float = 1f,
+    val library: List<LibraryBook> = emptyList(),
+    val showingLibrary: Boolean = true,
     val error: String? = null,
 ) {
     val currentChunk: SpeechChunk?

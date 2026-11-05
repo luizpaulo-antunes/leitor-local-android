@@ -29,6 +29,7 @@ class PdfBookParser(private val context: Context) {
                 val totalPages = document.numberOfPages
                 val chunks = mutableListOf<SpeechChunk>()
                 var pagesWithoutText = 0
+                val rawPages = mutableListOf<String>()
                 val stripper = PDFTextStripper().apply {
                     sortByPosition = true
                 }
@@ -36,7 +37,12 @@ class PdfBookParser(private val context: Context) {
                 for (pageIndex in 0 until totalPages) {
                     stripper.startPage = pageIndex + 1
                     stripper.endPage = pageIndex + 1
-                    val cleanText = TextPreprocessor.cleanPage(stripper.getText(document))
+                    rawPages += stripper.getText(document)
+                    onProgress(pageIndex + 1, totalPages)
+                }
+
+                val cleanPages = TextPreprocessor.cleanDocumentPages(rawPages)
+                cleanPages.forEachIndexed { pageIndex, cleanText ->
                     if (cleanText.isBlank()) {
                         pagesWithoutText += 1
                     } else {
@@ -44,7 +50,6 @@ class PdfBookParser(private val context: Context) {
                             chunks += SpeechChunk(pageIndex = pageIndex, text = text)
                         }
                     }
-                    onProgress(pageIndex + 1, totalPages)
                 }
 
                 if (chunks.isEmpty()) {

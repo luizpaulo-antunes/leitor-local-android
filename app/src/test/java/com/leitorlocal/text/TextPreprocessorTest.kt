@@ -31,4 +31,28 @@ class TextPreprocessorTest {
         assertTrue(chunks.all { it.length <= 700 })
         assertTrue(chunks.joinToString(" ").contains("frase número 80"))
     }
+
+    @Test
+    fun removesRepeatedHeadersFootersAndPageNumbers() {
+        val pages = listOf(
+            "Prefácio 5\nPrimeiro parágrafo do livro.\n5",
+            "Prefácio 6\nSegundo parágrafo do livro.\n6",
+            "Prefácio 7\nTerceiro parágrafo do livro.\n7",
+        )
+
+        val cleaned = TextPreprocessor.cleanDocumentPages(pages)
+
+        assertEquals("Primeiro parágrafo do livro.", cleaned[0])
+        assertEquals("Segundo parágrafo do livro.", cleaned[1])
+        assertEquals("Terceiro parágrafo do livro.", cleaned[2])
+    }
+
+    @Test
+    fun preparesHeadingsAndDashesForMoreNaturalSpeech() {
+        assertEquals("Capítulo primeiro.", TextPreprocessor.prepareForSpeech("Capítulo primeiro"))
+        assertEquals(
+            "Ele parou, respirou fundo.",
+            TextPreprocessor.prepareForSpeech("Ele parou — respirou fundo."),
+        )
+    }
 }

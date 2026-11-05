@@ -8,6 +8,7 @@ import androidx.core.net.toUri
 import com.leitorlocal.data.ReaderPreferences
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.ReaderUiState
+import com.leitorlocal.model.LibraryBook
 import com.leitorlocal.pdf.PdfBookParser
 import com.leitorlocal.pdf.PdfPageRenderer
 import com.leitorlocal.speech.ReadingService
@@ -25,7 +26,14 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val renderer = PdfPageRenderer(application)
     private val preferences = ReaderPreferences(application)
     private val voiceCatalog = TtsVoiceCatalog(application)
-    private val mutableUiState = MutableStateFlow(ReaderUiState())
+    private val savedSettings = preferences.settings()
+    private val mutableUiState = MutableStateFlow(
+        ReaderUiState(
+            speechRate = savedSettings.rate,
+            selectedVoiceName = savedSettings.voiceName,
+            library = preferences.library(),
+        ),
+    )
     val uiState: StateFlow<ReaderUiState> = mutableUiState.asStateFlow()
 
     private var loadJob: Job? = null
@@ -35,11 +43,22 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     init {
         observePlayback()
         loadVoices()
-        restoreLastBook()
     }
 
     fun openBook(uri: Uri, title: String) {
-        loadBook(uri, title, startIndex = 0, isNewBook = true)
+        val saved = preferences.findBook(uri.toString())
+        loadBook(uri, title, startIndex = saved?.chunkIndex ?: 0)
+    }
+
+    fun openLibraryBook(book: LibraryBook) {
+        loadBook(book.uri.toUri(), book.title, startIndex = book.chunkIndex)
+    }
+
+    fun showLibrary() {
+        if (uiState.value.playback.status == PlaybackStatus.PLAYING) pause()
+        mutableUiState.update {
+            it.copy(showingLibrary = true, library = preferences.library())
+        }
     }
 
     fun play() {
@@ -78,8 +97,11 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private fun loadVoices() {
         voiceCatalog.load { voices ->
             mutableUiState.update { state ->
-                val saved = preferences.load()?.voiceName
+                val saved = preferences.settings().voiceName
                 val selected = saved?.takeIf { name -> voices.any { it.name == name } }
+                    ?: voices.firstOrNull {
+                        !it.requiresNetwork && it.isHighQuality && it.localeTag.equals("pt-BR", true)
+                    }?.name
                     ?: voices.firstOrNull { !it.requiresNetwork && it.localeTag.equals("pt-BR", true) }?.name
                     ?: voices.firstOrNull()?.name
                 state.copy(voices = voices, selectedVoiceName = selected)
@@ -87,24 +109,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun restoreLastBook() {
-        val saved = preferences.load() ?: return
-        mutableUiState.update {
-            it.copy(speechRate = saved.rate, selectedVoiceName = saved.voiceName)
-        }
-        loadBook(
-            uri = saved.uri.toUri(),
-            title = saved.title,
-            startIndex = saved.chunkIndex,
-            isNewBook = false,
-        )
-    }
-
     private fun loadBook(
         uri: Uri,
         title: String,
         startIndex: Int,
-        isNewBook: Boolean,
     ) {
         loadJob?.cancel()
         if (ReadingSession.state.value.status != PlaybackStatus.STOPPED) {
@@ -117,6 +125,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 loadingMessage = "Abrindo o PDF…",
                 book = null,
                 pageBitmap = null,
+                showingLibrary = false,
                 error = null,
             )
         }
@@ -129,7 +138,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                 }
             }.onSuccess { book ->
-                if (isNewBook) preferences.saveBook(book.uri, book.title)
+                preferences.saveBook(book.uri, book.title, book.chunks.size, book.pageCount)
                 val restoredIndex = startIndex.coerceIn(0, book.chunks.lastIndex)
                 val currentState = mutableUiState.value
                 ReadingSession.configure(
@@ -146,6 +155,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         loadingMessage = "",
                         book = book,
                         playback = ReadingSession.state.value,
+                        library = preferences.library(),
                     )
                 }
                 renderPage(book.uri, book.chunks[restoredIndex].pageIndex)
@@ -154,6 +164,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     it.copy(
                         isLoading = false,
                         loadingMessage = "",
+                        showingLibrary = true,
+                        library = preferences.library(),
                         error = failure.message ?: "Não foi possível abrir este PDF.",
                     )
                 }
@@ -168,6 +180,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 val book = mutableUiState.value.book ?: return@collect
                 val page = book.chunks.getOrNull(playback.currentChunkIndex)?.pageIndex ?: return@collect
                 preferences.savePosition(playback.currentChunkIndex)
+                mutableUiState.update { it.copy(library = preferences.library()) }
                 if (page != lastRenderedPage) renderPage(book.uri, page)
             }
         }
