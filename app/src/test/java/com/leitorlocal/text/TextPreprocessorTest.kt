@@ -55,4 +55,37 @@ class TextPreprocessorTest {
             TextPreprocessor.prepareForSpeech("Ele parou — respirou fundo."),
         )
     }
+
+    @Test
+    fun extractsMultilineFigureCaptionAndItsPosition() {
+        val raw = """
+            Cabeçalho do capítulo
+            Figura 1.1 Cada volta calcula as chances, sorteia um e
+            recomeça com o texto maior.
+            O parágrafo seguinte começa aqui.
+        """.trimIndent()
+
+        val captions = TextPreprocessor.extractFigureCaptions(raw)
+
+        assertEquals(1, captions.size)
+        assertEquals(
+            "Figura 1.1 Cada volta calcula as chances, sorteia um e recomeça com o texto maior.",
+            captions.single().text,
+        )
+        assertTrue(captions.single().relativePosition in 0.2f..0.3f)
+    }
+
+    @Test
+    fun composesNumberedFigureDescriptionInStepOrder() {
+        val description = FigureDescriptionComposer.compose(
+            caption = "Figura 1.1. O ciclo de geração.",
+            alternativeText = "Um texto inicial à esquerda.",
+            ocrText = "2 calcula as chances\ntelhado\n1 olha o texto todo\n4 cola no fim e repete\n3 sorteia entre os mais prováveis",
+        )
+
+        assertTrue(description.contains("Figura 1.1"))
+        assertTrue(description.indexOf("1 olha") < description.indexOf("2 calcula"))
+        assertTrue(description.indexOf("2 calcula") < description.indexOf("3 sorteia"))
+        assertTrue(description.indexOf("3 sorteia") < description.indexOf("4 cola"))
+    }
 }

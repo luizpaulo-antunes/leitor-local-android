@@ -4,6 +4,7 @@ import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -42,6 +43,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -331,6 +333,10 @@ private fun ReaderContent(
 
             if (state.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) {
                 state.currentChunk?.let { chunk ->
+                    val figureBitmap = remember(chunk.figure?.imagePath) {
+                        chunk.figure?.imagePath?.let(BitmapFactory::decodeFile)
+                    }
+                    val focusedBitmap = figureBitmap ?: state.pageBitmap.takeIf { chunk.figure != null }
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -338,36 +344,68 @@ private fun ReaderContent(
                             .padding(horizontal = 20.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Card(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .fillMaxHeight(0.78f),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
-                            ),
-                            shape = RoundedCornerShape(18.dp),
-                        ) {
-                            Column(
-                                Modifier
-                                    .padding(horizontal = 20.dp, vertical = 18.dp)
-                                    .verticalScroll(rememberScrollState()),
+                        key(state.playback.currentChunkIndex) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .fillMaxHeight(if (chunk.figure != null) 0.9f else 0.78f),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
+                                ),
+                                shape = RoundedCornerShape(18.dp),
                             ) {
-                                Text(
-                                    text = if (state.playback.status == PlaybackStatus.PREPARING) {
-                                        "Preparando voz neural…"
-                                    } else {
-                                        "Lendo agora"
-                                    },
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = chunk.text,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontFamily = FontFamily.Serif,
-                                    lineHeight = MaterialTheme.typography.titleMedium.lineHeight * 1.15f,
-                                )
+                                Column(
+                                    Modifier
+                                        .padding(horizontal = 20.dp, vertical = 18.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                ) {
+                                    Text(
+                                        text = if (state.playback.status == PlaybackStatus.PREPARING) {
+                                            if (chunk.figure != null) {
+                                                "Preparando descrição da figura…"
+                                            } else {
+                                                "Preparando voz neural…"
+                                            }
+                                        } else {
+                                            if (chunk.figure != null) "Figura · lendo agora" else "Lendo agora"
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                    Spacer(Modifier.height(6.dp))
+                                    if (focusedBitmap != null && chunk.figure != null) {
+                                        Image(
+                                            bitmap = focusedBitmap.asImageBitmap(),
+                                            contentDescription = chunk.figure.caption.ifBlank {
+                                                chunk.figure.alternativeText.ifBlank { "Figura do livro" }
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .aspectRatio(
+                                                    (focusedBitmap.width.toFloat() / focusedBitmap.height)
+                                                        .coerceIn(0.55f, 2.4f),
+                                                )
+                                                .clip(RoundedCornerShape(12.dp)),
+                                            contentScale = ContentScale.Fit,
+                                        )
+                                        if (chunk.figure.caption.isNotBlank()) {
+                                            Spacer(Modifier.height(10.dp))
+                                            Text(
+                                                text = chunk.figure.caption,
+                                                style = MaterialTheme.typography.labelMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                fontFamily = FontFamily.Serif,
+                                            )
+                                        }
+                                        Spacer(Modifier.height(12.dp))
+                                    }
+                                    Text(
+                                        text = chunk.text,
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontFamily = FontFamily.Serif,
+                                        lineHeight = MaterialTheme.typography.titleMedium.lineHeight * 1.15f,
+                                    )
+                                }
                             }
                         }
                     }

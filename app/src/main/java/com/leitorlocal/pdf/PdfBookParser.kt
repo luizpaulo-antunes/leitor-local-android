@@ -3,9 +3,11 @@ package com.leitorlocal.pdf
 import android.content.Context
 import android.net.Uri
 import com.leitorlocal.model.BookContent
+import com.leitorlocal.model.FigureContent
 import com.leitorlocal.model.SpeechChunk
 import com.leitorlocal.data.BookCache
 import com.leitorlocal.text.TextPreprocessor
+import com.leitorlocal.text.FigureDescriptionComposer
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -22,10 +24,10 @@ class PdfBookParser(private val context: Context) {
     suspend fun parse(
         uri: Uri,
         title: String,
-        onProgress: (current: Int, total: Int) -> Unit,
+        onProgress: (message: String) -> Unit,
     ): BookContent = withContext(Dispatchers.IO) {
         cache.load(uri, title)?.let { cached ->
-            onProgress(cached.pageCount, cached.pageCount)
+            onProgress("Livro pronto.")
             return@withContext cached
         }
         val input = context.contentResolver.openInputStream(uri)
@@ -35,7 +37,6 @@ class PdfBookParser(private val context: Context) {
             PDDocument.load(stream).use { document ->
                 val totalPages = document.numberOfPages
                 val chunks = mutableListOf<SpeechChunk>()
-                var pagesWithoutText = 0
                 val rawPages = mutableListOf<String>()
                 val stripper = PDFTextStripper().apply {
                     sortByPosition = true
@@ -45,17 +46,30 @@ class PdfBookParser(private val context: Context) {
                     stripper.startPage = pageIndex + 1
                     stripper.endPage = pageIndex + 1
                     rawPages += stripper.getText(document)
-                    onProgress(pageIndex + 1, totalPages)
+                    onProgress("Extraindo texto da página ${pageIndex + 1} de $totalPages…")
                 }
 
+                val captionsByPage = rawPages.map(TextPreprocessor::extractFigureCaptions)
+                val figuresByPage = PdfFigureAnalyzer(context.applicationContext).analyze(
+                    document = document,
+                    bookUri = uri,
+                    captionsByPage = captionsByPage,
+                    onProgress = { current, total ->
+                        onProgress("Analisando figura $current de $total…")
+                    },
+                )
                 val cleanPages = TextPreprocessor.cleanDocumentPages(rawPages)
+                var pagesWithoutText = 0
                 cleanPages.forEachIndexed { pageIndex, cleanText ->
-                    if (cleanText.isBlank()) {
+                    val pageChunks = buildPageChunks(
+                        pageIndex = pageIndex,
+                        cleanText = cleanText,
+                        figures = figuresByPage[pageIndex].orEmpty(),
+                    )
+                    if (pageChunks.isEmpty()) {
                         pagesWithoutText += 1
                     } else {
-                        TextPreprocessor.splitIntoChunks(cleanText).forEach { text ->
-                            chunks += SpeechChunk(pageIndex = pageIndex, text = text)
-                        }
+                        chunks += pageChunks
                     }
                 }
 
@@ -75,5 +89,50 @@ class PdfBookParser(private val context: Context) {
                 ).also(cache::save)
             }
         }
+    }
+
+    private fun buildPageChunks(
+        pageIndex: Int,
+        cleanText: String,
+        figures: List<AnalyzedFigure>,
+    ): List<SpeechChunk> = buildList {
+        var cursor = 0
+
+        fun addText(text: String) {
+            TextPreprocessor.splitIntoChunks(text).forEach { chunkText ->
+                add(SpeechChunk(pageIndex = pageIndex, text = chunkText))
+            }
+        }
+
+        figures.sortedBy(AnalyzedFigure::relativePosition).forEach { figure ->
+            val captionIndex = figure.caption
+                .takeIf(String::isNotBlank)
+                ?.let { caption -> cleanText.indexOf(caption, startIndex = cursor, ignoreCase = true) }
+                ?: -1
+            if (captionIndex >= cursor) {
+                addText(cleanText.substring(cursor, captionIndex))
+                cursor = captionIndex + figure.caption.length
+            } else if (figure.relativePosition >= 0.5f && cursor == 0) {
+                addText(cleanText)
+                cursor = cleanText.length
+            }
+
+            val content = FigureContent(
+                imagePath = figure.imagePath,
+                caption = figure.caption,
+                alternativeText = figure.alternativeText,
+                ocrText = figure.ocrText,
+            )
+            val narration = FigureDescriptionComposer.compose(
+                caption = figure.caption,
+                alternativeText = figure.alternativeText,
+                ocrText = figure.ocrText,
+            )
+            TextPreprocessor.splitIntoChunks(narration).forEach { chunkText ->
+                add(SpeechChunk(pageIndex = pageIndex, text = chunkText, figure = content))
+            }
+        }
+
+        if (cursor < cleanText.length) addText(cleanText.substring(cursor))
     }
 }

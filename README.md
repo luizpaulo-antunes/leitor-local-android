@@ -9,11 +9,11 @@ API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.6.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.7.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.6.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.7.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -42,6 +42,23 @@ estão disponíveis neste repositório.
 - Inclui a voz neural brasileira Miro, executada offline pelo Sherpa-ONNX.
 - Remove ruído da voz Miro com um segundo modelo neural executado no aparelho.
 - Prepara e guarda localmente as próximas páginas em áudio tratado para iniciar e continuar a leitura com menos espera.
+- Identifica figuras acompanhadas por legenda ou marcação de acessibilidade no PDF.
+- Extrai e mostra a figura em destaque durante a narração.
+- Combina legenda, descrição acessível e OCR offline para narrar o conteúdo visual sem enviar o livro para a internet.
+
+## Figuras durante a leitura
+
+Ao encontrar uma figura, o aplicativo a intercala na ordem da leitura. Durante
+a narração, a imagem aparece sem desfoque, acompanhada da legenda e da descrição
+que está sendo falada. O reconhecimento de texto da figura usa o ML Kit
+embutido no APK e funciona offline.
+
+Na primeira abertura de um livro, a análise das figuras pode levar alguns
+instantes. O texto processado, as descrições e as imagens extraídas ficam em
+cache no próprio aparelho; as próximas aberturas não repetem esse trabalho.
+PDFs bem estruturados, com legendas e texto alternativo, produzem resultados
+melhores. Diagramas complexos sem texto ou descrição acessível ainda recebem
+uma descrição limitada ao conteúdo que o aplicativo consegue detectar.
 
 ## Voz neural offline incluída
 
@@ -57,12 +74,12 @@ você tocar em reproduzir antes do fim, a leitura recebe prioridade e o cache
 continua sendo abastecido adiante durante a reprodução. O cache de áudio é
 limitado a 192 MB e o conteúdo do livro não é enviado para a internet.
 
-O APK com a voz neural tem aproximadamente 145 MB e suporta aparelhos ARM64 e
+O APK com a voz neural e o OCR offline tem aproximadamente 165 MB e suporta aparelhos ARM64 e
 ARM32. O modelo Miro possui licença CC BY-NC-SA 4.0 e, portanto, esta distribuição
 é destinada a uso pessoal e não comercial. Consulte `THIRD_PARTY_NOTICES.md`.
 
-PDFs formados apenas por imagens ainda precisam de OCR. O suporte a OCR local é
-uma extensão planejada.
+O OCR desta versão é aplicado às figuras detectadas. PDFs inteiros formados
+apenas por páginas escaneadas ainda não têm extração completa do texto.
 
 ## Para desenvolvedores
 

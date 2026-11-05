@@ -155,9 +155,9 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
         loadJob = viewModelScope.launch {
             runCatching {
-                parser.parse(uri, title) { current, total ->
+                parser.parse(uri, title) { message ->
                     mutableUiState.update {
-                        it.copy(loadingMessage = "Preparando página $current de $total…")
+                        it.copy(loadingMessage = message)
                     }
                 }
             }.onSuccess { book ->

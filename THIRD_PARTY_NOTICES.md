@@ -40,3 +40,11 @@ k2-fsa.
 - Projeto original: https://github.com/Xiaobin-Rong/gtcrn
 - Modelo para Sherpa-ONNX: https://github.com/k2-fsa/sherpa-onnx/releases/tag/speech-enhancement-models
 - Licença: https://github.com/Xiaobin-Rong/gtcrn/blob/main/LICENSE
+
+## Google ML Kit Text Recognition
+
+O aplicativo inclui o reconhecedor de texto latino do Google ML Kit para ler,
+offline, o texto presente nas figuras extraídas dos PDFs.
+
+- Documentação: https://developers.google.com/ml-kit/vision/text-recognition/v2/android
+- Termos: https://developers.google.com/terms

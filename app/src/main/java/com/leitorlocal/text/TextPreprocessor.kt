@@ -59,6 +59,44 @@ object TextPreprocessor {
         return paragraphs.joinToString("\n\n")
     }
 
+    fun extractFigureCaptions(raw: String): List<FigureCaption> {
+        val lines = raw
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lines()
+        if (lines.isEmpty()) return emptyList()
+
+        val captions = mutableListOf<FigureCaption>()
+        var lineIndex = 0
+        while (lineIndex < lines.size) {
+            val firstLine = lines[lineIndex].trim()
+            if (!firstLine.matches(FIGURE_CAPTION_START)) {
+                lineIndex += 1
+                continue
+            }
+
+            val captionLines = mutableListOf<String>()
+            var current = lineIndex
+            while (current < lines.size && captionLines.size < MAX_CAPTION_LINES) {
+                val line = lines[current].trim()
+                if (line.isBlank()) break
+                captionLines += line
+                current += 1
+                if (line.lastOrNull() in CAPTION_ENDING_PUNCTUATION) break
+            }
+            val caption = cleanPage(captionLines.joinToString("\n"))
+                .take(MAX_CAPTION_LENGTH)
+            if (caption.isNotBlank()) {
+                captions += FigureCaption(
+                    text = caption,
+                    relativePosition = lineIndex.toFloat() / lines.size.coerceAtLeast(1),
+                )
+            }
+            lineIndex = maxOf(current, lineIndex + 1)
+        }
+        return captions
+    }
+
     fun splitIntoChunks(cleanText: String, targetLength: Int = 240): List<String> {
         if (cleanText.isBlank()) return emptyList()
 
@@ -164,8 +202,20 @@ object TextPreprocessor {
     }
 
     private const val MARGIN_LINE_COUNT = 3
+    private const val MAX_CAPTION_LINES = 4
+    private const val MAX_CAPTION_LENGTH = 500
+    private val CAPTION_ENDING_PUNCTUATION = setOf('.', '!', '?')
+    private val FIGURE_CAPTION_START = Regex(
+        "^(?:figura|fig\\.?|imagem|gr[aá]fico|tabela)\\s+[\\p{L}\\d][\\p{L}\\d._-]*.*$",
+        RegexOption.IGNORE_CASE,
+    )
     private val PAGE_NUMBER_PATTERN = Regex(
         "^(?:(?:p[aá]g(?:ina)?\\.?|page)\\s*)?(?:\\d+|[ivxlcdm]+)$",
         RegexOption.IGNORE_CASE,
     )
 }
+
+data class FigureCaption(
+    val text: String,
+    val relativePosition: Float,
+)

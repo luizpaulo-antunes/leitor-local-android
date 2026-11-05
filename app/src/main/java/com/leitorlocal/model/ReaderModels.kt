@@ -5,6 +5,14 @@ import android.graphics.Bitmap
 data class SpeechChunk(
     val pageIndex: Int,
     val text: String,
+    val figure: FigureContent? = null,
+)
+
+data class FigureContent(
+    val imagePath: String?,
+    val caption: String,
+    val alternativeText: String,
+    val ocrText: String,
 )
 
 data class BookContent(

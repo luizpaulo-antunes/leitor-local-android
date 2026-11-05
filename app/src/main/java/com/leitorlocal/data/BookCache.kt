@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.core.net.toUri
 import com.leitorlocal.model.BookContent
+import com.leitorlocal.model.FigureContent
 import com.leitorlocal.model.SpeechChunk
 import org.json.JSONArray
 import org.json.JSONObject
@@ -11,7 +12,7 @@ import java.io.File
 import java.security.MessageDigest
 
 class BookCache(private val context: Context) {
-    private val directory = File(context.filesDir, "processed_books_v2").apply { mkdirs() }
+    private val directory = File(context.filesDir, "processed_books_v3").apply { mkdirs() }
 
     fun load(uri: Uri, title: String): BookContent? = runCatching {
         val file = cacheFile(uri)
@@ -23,7 +24,21 @@ class BookCache(private val context: Context) {
         val chunks = buildList {
             for (index in 0 until chunksJson.length()) {
                 val item = chunksJson.getJSONObject(index)
-                add(SpeechChunk(pageIndex = item.getInt("page"), text = item.getString("text")))
+                val figureJson = item.optJSONObject("figure")
+                add(
+                    SpeechChunk(
+                        pageIndex = item.getInt("page"),
+                        text = item.getString("text"),
+                        figure = figureJson?.let {
+                            FigureContent(
+                                imagePath = it.optString("imagePath").takeIf(String::isNotBlank),
+                                caption = it.optString("caption"),
+                                alternativeText = it.optString("alternativeText"),
+                                ocrText = it.optString("ocrText"),
+                            )
+                        },
+                    ),
+                )
             }
         }
         if (chunks.isEmpty()) return null
@@ -41,7 +56,20 @@ class BookCache(private val context: Context) {
             val uri = book.uri.toUri()
             val chunks = JSONArray()
             book.chunks.forEach { chunk ->
-                chunks.put(JSONObject().put("page", chunk.pageIndex).put("text", chunk.text))
+                val item = JSONObject()
+                    .put("page", chunk.pageIndex)
+                    .put("text", chunk.text)
+                chunk.figure?.let { figure ->
+                    item.put(
+                        "figure",
+                        JSONObject()
+                            .put("imagePath", figure.imagePath ?: "")
+                            .put("caption", figure.caption)
+                            .put("alternativeText", figure.alternativeText)
+                            .put("ocrText", figure.ocrText),
+                    )
+                }
+                chunks.put(item)
             }
             val root = JSONObject()
                 .put("sourceSize", sourceSize(uri))
