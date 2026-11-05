@@ -9,11 +9,11 @@ API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.4.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.4.1.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.4.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.4.1.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -44,7 +44,7 @@ estão disponíveis neste repositório.
 ## Voz neural offline incluída
 
 Na tela do livro, abra o seletor **Voz** e escolha
-**Miro neural · pt-BR · offline**. O motor e o modelo já fazem parte do APK; não
+**Miro — narrador neural natural · offline**. O motor e o modelo já fazem parte do APK; não
 é necessário instalar outro aplicativo, baixar arquivos adicionais ou alterar
 as configurações do Android.
 

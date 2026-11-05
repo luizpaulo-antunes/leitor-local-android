@@ -44,7 +44,11 @@ class MainActivity : ComponentActivity() {
                 viewModel = viewModel,
                 onOpenPdf = { openPdf.launch(arrayOf("application/pdf")) },
                 onPlayPause = {
-                    if (viewModel.uiState.value.playback.status == PlaybackStatus.PLAYING) {
+                    if (viewModel.uiState.value.playback.status in setOf(
+                            PlaybackStatus.PLAYING,
+                            PlaybackStatus.PREPARING,
+                        )
+                    ) {
                         viewModel.pause()
                     } else {
                         requestNotificationPermissionAndPlay()

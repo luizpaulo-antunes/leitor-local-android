@@ -28,7 +28,7 @@ class TextPreprocessorTest {
         val chunks = TextPreprocessor.splitIntoChunks(text, targetLength = 180)
 
         assertTrue(chunks.size > 1)
-        assertTrue(chunks.all { it.length <= 700 })
+        assertTrue(chunks.all { it.length <= 180 })
         assertTrue(chunks.joinToString(" ").contains("frase número 80"))
     }
 

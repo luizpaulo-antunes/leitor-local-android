@@ -59,7 +59,7 @@ object TextPreprocessor {
         return paragraphs.joinToString("\n\n")
     }
 
-    fun splitIntoChunks(cleanText: String, targetLength: Int = 320): List<String> {
+    fun splitIntoChunks(cleanText: String, targetLength: Int = 240): List<String> {
         if (cleanText.isBlank()) return emptyList()
 
         val chunks = mutableListOf<String>()
@@ -72,7 +72,7 @@ object TextPreprocessor {
             var end = iterator.next()
             while (end != BreakIterator.DONE) {
                 val sentence = paragraph.substring(start, end).trim()
-                if (sentence.isNotEmpty()) sentences += splitOversized(sentence, 700)
+                if (sentence.isNotEmpty()) sentences += splitOversized(sentence, targetLength)
                 start = end
                 end = iterator.next()
             }

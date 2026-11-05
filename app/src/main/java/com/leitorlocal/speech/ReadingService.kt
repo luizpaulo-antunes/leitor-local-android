@@ -110,7 +110,10 @@ class ReadingService : Service() {
     }
 
     private fun move(offset: Int) {
-        val wasPlaying = ReadingSession.state.value.status == PlaybackStatus.PLAYING || playWhenReady
+        val wasPlaying = ReadingSession.state.value.status in setOf(
+            PlaybackStatus.PLAYING,
+            PlaybackStatus.PREPARING,
+        ) || playWhenReady
         tts?.stop()
         cancelNeuralPlayback()
         ReadingSession.moveBy(offset)
@@ -147,26 +150,41 @@ class ReadingService : Service() {
         tts?.stop()
         neuralPlayer.stop()
         val requestId = ++neuralRequestId
-        ReadingSession.setStatus(PlaybackStatus.PLAYING)
+        ReadingSession.setStatus(PlaybackStatus.PREPARING)
         updateNotification(true)
 
         neuralExecutor.execute {
             runCatching {
-                neuralTts.generate(chunk.text, ReadingSession.speechRate)
-            }.onSuccess { audio ->
+                if (requestId != neuralRequestId || !playWhenReady) return@runCatching
+                neuralPlayer.start(
+                    sampleRate = neuralTts.sampleRate(),
+                    onCompletion = ::handleChunkDone,
+                    onError = { failure ->
+                        handleTtsError(neuralErrorMessage("reproduzir", failure))
+                    },
+                )
                 mainHandler.post {
-                    if (requestId != neuralRequestId || !playWhenReady) return@post
-                    neuralPlayer.play(
-                        audio = audio,
-                        onCompletion = ::handleChunkDone,
-                        onError = { handleTtsError("A voz neural não conseguiu reproduzir este trecho.") },
-                    )
+                    if (requestId == neuralRequestId && playWhenReady) {
+                        ReadingSession.setStatus(PlaybackStatus.PLAYING)
+                    }
                 }
+                neuralTts.generateStreaming(chunk.text, ReadingSession.speechRate) { samples ->
+                    requestId == neuralRequestId && playWhenReady && neuralPlayer.write(samples)
+                }
+                if (requestId == neuralRequestId && playWhenReady) neuralPlayer.finish()
             }.onFailure {
                 if (requestId == neuralRequestId) {
-                    handleTtsError("Não foi possível iniciar a voz neural offline.")
+                    handleTtsError(neuralErrorMessage("iniciar", it))
                 }
             }
+        }
+    }
+
+    private fun neuralErrorMessage(action: String, failure: Throwable): String {
+        val detail = failure.message?.takeIf(String::isNotBlank)?.take(120)
+        return buildString {
+            append("Não foi possível $action a voz neural offline")
+            if (detail != null) append(": $detail") else append('.')
         }
     }
 

@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -290,7 +291,7 @@ private fun ReaderContent(
                     modifier = Modifier
                         .fillMaxWidth()
                         .verticalScroll(rememberScrollState())
-                        .blur(if (state.playback.status == PlaybackStatus.PLAYING) 2.5.dp else 0.dp),
+                        .blur(if (state.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) 2.5.dp else 0.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     Image(
@@ -302,7 +303,7 @@ private fun ReaderContent(
                 }
             }
 
-            if (state.playback.status == PlaybackStatus.PLAYING) {
+            if (state.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) {
                 state.currentChunk?.let { chunk ->
                     Box(
                         modifier = Modifier
@@ -312,14 +313,25 @@ private fun ReaderContent(
                         contentAlignment = Alignment.Center,
                     ) {
                         Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .fillMaxHeight(0.78f),
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
                             ),
                             shape = RoundedCornerShape(18.dp),
                         ) {
-                            Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+                            Column(
+                                Modifier
+                                    .padding(horizontal = 20.dp, vertical = 18.dp)
+                                    .verticalScroll(rememberScrollState()),
+                            ) {
                                 Text(
-                                    text = "Lendo agora",
+                                    text = if (state.playback.status == PlaybackStatus.PREPARING) {
+                                        "Preparando voz neural…"
+                                    } else {
+                                        "Lendo agora"
+                                    },
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
@@ -329,8 +341,6 @@ private fun ReaderContent(
                                     style = MaterialTheme.typography.titleMedium,
                                     fontFamily = FontFamily.Serif,
                                     lineHeight = MaterialTheme.typography.titleMedium.lineHeight * 1.15f,
-                                    maxLines = 8,
-                                    overflow = TextOverflow.Ellipsis,
                                 )
                             }
                         }
@@ -349,7 +359,7 @@ private fun ReaderContent(
             progress = { readingProgress.coerceIn(0f, 1f) },
             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
         )
-        if (state.playback.status != PlaybackStatus.PLAYING) state.currentChunk?.let { chunk ->
+        if (state.playback.status !in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) state.currentChunk?.let { chunk ->
             Text(
                 text = chunk.text,
                 style = MaterialTheme.typography.bodyMedium,
@@ -368,7 +378,7 @@ private fun ReaderContent(
         }
 
         PlaybackControls(
-            isPlaying = state.playback.status == PlaybackStatus.PLAYING,
+            isPlaying = state.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING),
             onPlayPause = onPlayPause,
             onPrevious = onPrevious,
             onNext = onNext,
@@ -468,7 +478,12 @@ private fun VoiceSelector(
                         Column {
                             Text(voice.label)
                             Text(
-                                voice.name,
+                                buildString {
+                                    append(if (voice.requiresNetwork) "Online" else "Offline")
+                                    append(" · ${voice.localeTag}")
+                                    if (voice.isHighQuality) append(" · alta qualidade")
+                                    if (voice.isEmbeddedNeural) append(" · neural incorporada")
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

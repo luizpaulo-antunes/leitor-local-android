@@ -6,7 +6,6 @@ import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Handler
 import android.os.Looper
-import com.k2fsa.sherpa.onnx.GeneratedAudio
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
@@ -16,14 +15,22 @@ import java.io.File
 class EmbeddedNeuralTts(private val context: Context) {
     private var engine: OfflineTts? = null
 
-    fun generate(text: String, speed: Float): GeneratedAudio {
+    fun generateStreaming(
+        text: String,
+        speed: Float,
+        onSamples: (FloatArray) -> Boolean,
+    ) {
         val tts = engine ?: createEngine().also { engine = it }
-        return tts.generate(
+        tts.generateWithCallback(
             text = text,
             sid = 0,
             speed = speed.coerceIn(0.6f, 1.6f),
-        )
+        ) { samples ->
+            if (onSamples(samples)) 1 else 0
+        }
     }
+
+    fun sampleRate(): Int = (engine ?: createEngine().also { engine = it }).sampleRate()
 
     fun release() {
         engine?.release()
@@ -89,13 +96,20 @@ class EmbeddedNeuralTts(private val context: Context) {
 class NeuralAudioPlayer {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var track: AudioTrack? = null
+    private var framesWritten = 0
+    private var completion: (() -> Unit)? = null
+    private var error: ((Throwable) -> Unit)? = null
 
     @Synchronized
-    fun play(audio: GeneratedAudio, onCompletion: () -> Unit, onError: (Throwable) -> Unit) {
+    fun start(sampleRate: Int, onCompletion: () -> Unit, onError: (Throwable) -> Unit) {
         stop()
         runCatching {
-            require(audio.samples.isNotEmpty()) { "A voz neural não gerou áudio." }
-            val bufferBytes = audio.samples.size * Float.SIZE_BYTES
+            val minimumBuffer = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+            )
+            check(minimumBuffer > 0) { "O aparelho não aceitou o formato de áudio neural." }
             val newTrack = AudioTrack.Builder()
                 .setAudioAttributes(
                     AudioAttributes.Builder()
@@ -105,36 +119,30 @@ class NeuralAudioPlayer {
                 )
                 .setAudioFormat(
                     AudioFormat.Builder()
-                        .setEncoding(AudioFormat.ENCODING_PCM_FLOAT)
-                        .setSampleRate(audio.sampleRate)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .build(),
                 )
-                .setTransferMode(AudioTrack.MODE_STATIC)
-                .setBufferSizeInBytes(bufferBytes)
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(minimumBuffer * 2)
                 .build()
-
+            check(newTrack.state == AudioTrack.STATE_INITIALIZED) {
+                "Não foi possível abrir a saída de áudio neural."
+            }
             newTrack.setPlaybackPositionUpdateListener(
                 object : AudioTrack.OnPlaybackPositionUpdateListener {
                     override fun onMarkerReached(audioTrack: AudioTrack?) {
-                        mainHandler.post {
-                            stop()
-                            onCompletion()
-                        }
+                        audioTrack?.let(::complete)
                     }
 
                     override fun onPeriodicNotification(audioTrack: AudioTrack?) = Unit
                 },
             )
-            val written = newTrack.write(
-                audio.samples,
-                0,
-                audio.samples.size,
-                AudioTrack.WRITE_BLOCKING,
-            )
-            check(written == audio.samples.size) { "Não foi possível preparar o áudio neural." }
-            newTrack.notificationMarkerPosition = audio.samples.size
             track = newTrack
+            framesWritten = 0
+            completion = onCompletion
+            error = onError
             newTrack.play()
         }.onFailure { failure ->
             stop()
@@ -143,9 +151,67 @@ class NeuralAudioPlayer {
     }
 
     @Synchronized
+    fun write(samples: FloatArray): Boolean {
+        val current = track ?: return false
+        if (samples.isEmpty()) return true
+        val pcm = ShortArray(samples.size) { index ->
+            (samples[index].coerceIn(-1f, 1f) * Short.MAX_VALUE).toInt().toShort()
+        }
+        var offset = 0
+        while (offset < pcm.size) {
+            val count = current.write(
+                pcm,
+                offset,
+                pcm.size - offset,
+                AudioTrack.WRITE_BLOCKING,
+            )
+            if (count <= 0) {
+                fail(IllegalStateException("Falha $count ao enviar o áudio neural."))
+                return false
+            }
+            offset += count
+            framesWritten += count
+        }
+        return true
+    }
+
+    @Synchronized
+    fun finish() {
+        val current = track ?: return
+        if (framesWritten <= 0) {
+            fail(IllegalStateException("A voz neural não gerou áudio."))
+            return
+        }
+        val played = current.playbackHeadPosition.toLong() and 0xffffffffL
+        if (played >= framesWritten.toLong()) {
+            complete(current)
+        } else {
+            current.notificationMarkerPosition = framesWritten
+        }
+    }
+
+    @Synchronized
+    private fun complete(source: AudioTrack) {
+        if (track !== source) return
+        val callback = completion
+        stop()
+        callback?.let { mainHandler.post(it) }
+    }
+
+    @Synchronized
+    private fun fail(failure: Throwable) {
+        val callback = error
+        stop()
+        callback?.let { mainHandler.post { it(failure) } }
+    }
+
+    @Synchronized
     fun stop() {
         val current = track ?: return
         track = null
+        completion = null
+        error = null
+        framesWritten = 0
         runCatching { current.setPlaybackPositionUpdateListener(null) }
         runCatching {
             if (current.playState != AudioTrack.PLAYSTATE_STOPPED) current.stop()

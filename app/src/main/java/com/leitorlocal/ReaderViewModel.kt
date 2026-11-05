@@ -57,7 +57,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun showLibrary() {
-        if (uiState.value.playback.status == PlaybackStatus.PLAYING) pause()
+        if (uiState.value.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) pause()
         mutableUiState.update {
             it.copy(showingLibrary = true, library = preferences.library())
         }
@@ -99,7 +99,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun refreshVoices() {
         if (
             ReadingSession.hasContent() &&
-            ReadingSession.state.value.status != PlaybackStatus.PLAYING
+            ReadingSession.state.value.status !in setOf(
+                PlaybackStatus.PLAYING,
+                PlaybackStatus.PREPARING,
+            )
         ) {
             ReadingService.reloadEngine(getApplication())
         }
@@ -107,7 +110,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             mutableUiState.update { state ->
                 val neuralVoice = VoiceOption(
                     name = EMBEDDED_NEURAL_VOICE_NAME,
-                    label = "Miro neural · pt-BR · offline",
+                    label = "Miro — narrador neural natural · offline",
                     localeTag = "pt-BR",
                     requiresNetwork = false,
                     quality = Int.MAX_VALUE,

@@ -33,6 +33,7 @@ data class LibraryBook(
 
 enum class PlaybackStatus {
     STOPPED,
+    PREPARING,
     PLAYING,
     PAUSED,
     ERROR,

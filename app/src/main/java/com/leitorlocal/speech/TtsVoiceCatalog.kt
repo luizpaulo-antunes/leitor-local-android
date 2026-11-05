@@ -30,16 +30,11 @@ class TtsVoiceCatalog(context: Context) {
                         { it.name },
                     ),
                 )
-                .map { voice ->
+                .mapIndexed { index, voice ->
                     val highQuality = voice.quality >= Voice.QUALITY_HIGH
                     VoiceOption(
                         name = voice.name,
-                        label = buildString {
-                            append(voice.locale.getDisplayName(Locale.forLanguageTag("pt-BR")))
-                            if (highQuality) append(" · alta qualidade")
-                            if (voice.isNetworkConnectionRequired) append(" · usa internet")
-                            else append(" · offline")
-                        },
+                        label = personaLabel(index, voice),
                         localeTag = voice.locale.toLanguageTag(),
                         requiresNetwork = voice.isNetworkConnectionRequired,
                         quality = voice.quality,
@@ -53,5 +48,22 @@ class TtsVoiceCatalog(context: Context) {
     fun close() {
         engine?.shutdown()
         engine = null
+    }
+
+    private fun personaLabel(index: Int, voice: Voice): String {
+        val personas = listOf(
+            "Aurora — clara e leve",
+            "Bento — firme e direto",
+            "Cecília — calma e acolhedora",
+            "Dante — pausado e sóbrio",
+            "Elisa — suave e fluida",
+            "Gael — ágil e objetivo",
+            "Helena — serena e elegante",
+            "Theo — equilibrado e presente",
+        )
+        val base = personas[index % personas.size]
+        val suffix = if (index >= personas.size) " ${index / personas.size + 1}" else ""
+        val mode = if (voice.isNetworkConnectionRequired) "online" else "offline"
+        return "$base$suffix · $mode"
     }
 }
