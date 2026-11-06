@@ -9,17 +9,19 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.security.MessageDigest
 
 class BookCoverStore(context: Context) {
-    private val renderer = PdfPageRenderer(context.applicationContext)
-    private val directory = File(context.filesDir, "book_covers_v1").apply { mkdirs() }
+    private val context = context.applicationContext
+    private val renderer = PdfPageRenderer(this.context)
+    private val directory = File(this.context.filesDir, CACHE_DIRECTORY).apply { mkdirs() }
     private val mutex = Mutex()
 
     suspend fun ensureCover(uri: Uri): String? = mutex.withLock {
         withContext(Dispatchers.IO) {
-            val destination = File(directory, "${uri.digest()}.jpg")
+            val fingerprint = DocumentFingerprint.resolve(context, uri)
+            val destination = File(directory, "${fingerprint.cacheKey(uri)}.jpg")
             if (destination.isFile && destination.length() > 0) {
+                destination.setLastModified(System.currentTimeMillis())
                 return@withContext destination.absolutePath
             }
 
@@ -42,7 +44,7 @@ class BookCoverStore(context: Context) {
         }
     }
 
-    private fun Uri.digest(): String = MessageDigest.getInstance("SHA-256")
-        .digest(toString().toByteArray())
-        .joinToString("") { byte -> "%02x".format(byte) }
+    companion object {
+        const val CACHE_DIRECTORY = "book_covers_v2"
+    }
 }

@@ -13,6 +13,8 @@ import kotlin.math.roundToInt
 
 class NeuralAudioCache(context: Context) {
     private val root = File(context.noBackupFilesDir, CACHE_DIRECTORY)
+    private var bytesWrittenSinceLastTrim = 0L
+    private var initialTrimCompleted = false
 
     @Synchronized
     fun load(
@@ -22,6 +24,7 @@ class NeuralAudioCache(context: Context) {
         speechRate: Float,
         voiceName: String,
     ): NeuralAudio? {
+        ensureInitialTrim()
         val file = cacheFile(bookId, chunkIndex, text, speechRate, voiceName)
         if (!file.isFile) return null
 
@@ -54,6 +57,7 @@ class NeuralAudioCache(context: Context) {
         voiceName: String,
         audio: NeuralAudio,
     ) {
+        ensureInitialTrim()
         if (audio.samples.isEmpty() || audio.sampleRate <= 0) return
         val destination = cacheFile(bookId, chunkIndex, text, speechRate, voiceName)
         if (destination.isFile) return
@@ -80,7 +84,11 @@ class NeuralAudioCache(context: Context) {
                     file.isFile && file.name.startsWith("${chunkIndex}_") && file != destination
                 }
                 ?.forEach(File::delete)
-            trimToSize()
+            bytesWrittenSinceLastTrim += destination.length()
+            if (bytesWrittenSinceLastTrim >= TRIM_INTERVAL_BYTES) {
+                trimToSize()
+                bytesWrittenSinceLastTrim = 0L
+            }
         }.onFailure {
             temporary.delete()
         }
@@ -116,6 +124,12 @@ class NeuralAudioCache(context: Context) {
             .forEach(File::delete)
     }
 
+    private fun ensureInitialTrim() {
+        if (initialTrimCompleted) return
+        trimToSize()
+        initialTrimCompleted = true
+    }
+
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { byte -> "%02x".format(byte) }
@@ -127,5 +141,6 @@ class NeuralAudioCache(context: Context) {
         private const val FORMAT_VERSION = 2
         private const val MAX_SAMPLE_COUNT = 96_000 * 60 * 10
         private const val MAX_CACHE_BYTES = 192L * 1024 * 1024
+        private const val TRIM_INTERVAL_BYTES = 16L * 1024 * 1024
     }
 }

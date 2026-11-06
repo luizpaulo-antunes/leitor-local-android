@@ -1,16 +1,13 @@
 package com.leitorlocal.speech
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.media.AudioAttributes
-import android.media.MediaMetadata
-import android.media.session.MediaSession
-import android.media.session.PlaybackState
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -18,8 +15,6 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.content.ContextCompat
-import com.leitorlocal.MainActivity
-import com.leitorlocal.R
 import com.leitorlocal.data.ReaderPreferences
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.SpeechChunk
@@ -45,9 +40,12 @@ class ReadingService : Service() {
     private lateinit var neuralAudioCache: NeuralAudioCache
     private var tts: TextToSpeech? = null
     private var isTtsReady = false
-    private var playWhenReady = false
+    private var ttsEngineGeneration = 0L
+    @Volatile private var playWhenReady = false
     private val neuralExecutor = Executors.newSingleThreadExecutor()
+    private val neuralPrewarmExecutor = Executors.newSingleThreadExecutor()
     private val neuralPlaybackExecutor = Executors.newSingleThreadExecutor()
+    private val neuralGenerationLock = Any()
     private val neuralTts by lazy { EmbeddedNeuralTts(applicationContext) }
     private val neuralPlayer = NeuralAudioPlayer()
     @Volatile private var neuralRequestId = 0L
@@ -55,16 +53,87 @@ class ReadingService : Service() {
     @Volatile private var prewarmRequestId = 0L
     private var ttsKaraokeGeneration = 0L
     private var ttsFallbackRunnable: Runnable? = null
-    private var activeTtsChunk: SpeechChunk? = null
+    private val ttsUtterances = TtsUtteranceGate()
     @Volatile private var hasNativeRangeCallbacks = false
-    private lateinit var mediaSession: MediaSession
+    private lateinit var mediaNotificationController: MediaNotificationController
+    private lateinit var audioManager: AudioManager
+    private lateinit var audioFocusRequest: AudioFocusRequest
+    private var audioFocusRequested = false
+    private var hasAudioFocus = false
+    private var resumeAfterTransientFocusLoss = false
+    private var noisyReceiverRegistered = false
+    private var hasForegroundNotification = false
+
+    private val playbackAudioAttributes = AudioAttributes.Builder()
+        .setUsage(AudioAttributes.USAGE_MEDIA)
+        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+        .build()
+
+    private val becomingNoisyReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != AudioManager.ACTION_AUDIO_BECOMING_NOISY) return
+            resumeAfterTransientFocusLoss = false
+            pausePlayback(abandonFocus = true)
+        }
+    }
+
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (audioFocusRequested) {
+            when (change) {
+                AudioManager.AUDIOFOCUS_GAIN -> {
+                    hasAudioFocus = true
+                    if (resumeAfterTransientFocusLoss && ReadingSession.hasContent()) {
+                        resumeAfterTransientFocusLoss = false
+                        play(requestFocus = false)
+                    }
+                }
+
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT,
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK,
+                -> {
+                    hasAudioFocus = false
+                    resumeAfterTransientFocusLoss = playWhenReady
+                    pausePlayback(abandonFocus = false)
+                }
+
+                AudioManager.AUDIOFOCUS_LOSS -> {
+                    hasAudioFocus = false
+                    resumeAfterTransientFocusLoss = false
+                    pausePlayback(abandonFocus = true)
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
         preferences = ReaderPreferences(this)
         neuralAudioCache = NeuralAudioCache(this)
-        createNotificationChannel()
-        initializeMediaSession()
+        audioManager = getSystemService(AudioManager::class.java)
+        audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(playbackAudioAttributes)
+            .setAcceptsDelayedFocusGain(true)
+            .setWillPauseWhenDucked(true)
+            .setOnAudioFocusChangeListener(audioFocusChangeListener, mainHandler)
+            .build()
+        mediaNotificationController = MediaNotificationController(
+            service = this,
+            audioAttributes = playbackAudioAttributes,
+            actions = MediaNotificationActions(
+                play = ACTION_PLAY,
+                pause = ACTION_PAUSE,
+                next = ACTION_NEXT,
+                previous = ACTION_PREVIOUS,
+            ),
+            callbacks = MediaSessionCallbacks(
+                onPlay = { play() },
+                onPause = { pause() },
+                onNext = { move(+1) },
+                onPrevious = { move(-1) },
+                onStop = { stopReading() },
+            ),
+        )
+        mediaNotificationController.initialize()
         initializeTts()
     }
 
@@ -75,7 +144,7 @@ class ReadingService : Service() {
             ACTION_PAUSE -> pause()
             ACTION_NEXT -> move(+1)
             ACTION_PREVIOUS -> move(-1)
-            ACTION_RELOAD_ENGINE -> reloadEngine()
+            ACTION_RECONFIGURE -> reconfigurePlayback()
             ACTION_STOP -> stopReading()
         }
         return START_NOT_STICKY
@@ -84,61 +153,90 @@ class ReadingService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun initializeTts() {
+        val engineGeneration = ++ttsEngineGeneration
         tts = TextToSpeech(applicationContext) { status ->
-            val engine = tts
-            if (status != TextToSpeech.SUCCESS || engine == null) {
-                if (usesEmbeddedNeuralVoice()) {
-                    return@TextToSpeech
-                } else {
-                    ReadingSession.setStatus(PlaybackStatus.ERROR, "O mecanismo de voz não pôde ser iniciado.")
-                    stopSelf()
-                }
-                return@TextToSpeech
-            }
-
-            engine.language = Locale.forLanguageTag("pt-BR")
-            engine.setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build(),
-            )
-            engine.setOnUtteranceProgressListener(listener)
-            isTtsReady = true
-            applySettings()
-            if (playWhenReady && !usesEmbeddedNeuralVoice()) speakCurrent()
+            mainHandler.post { handleTtsInitialized(engineGeneration, status) }
         }
     }
 
-    private fun reloadEngine() {
-        playWhenReady = false
-        cancelTtsKaraoke()
-        cancelNeuralPlayback()
-        isTtsReady = false
-        tts?.stop()
-        tts?.shutdown()
-        tts = null
-        initializeTts()
+    private fun handleTtsInitialized(engineGeneration: Long, status: Int) {
+        if (engineGeneration != ttsEngineGeneration) return
+        val engine = tts
+        // A callback may arrive after shutdown(); in that case there is no request left to fail
+        // and touching the already released MediaSession would be incorrect.
+        if (engine == null) return
+        if (status != TextToSpeech.SUCCESS) {
+            if (!usesEmbeddedNeuralVoice()) {
+                transitionToPlaybackError("O mecanismo de voz não pôde ser iniciado.")
+            }
+            return
+        }
+
+        engine.language = Locale.forLanguageTag("pt-BR")
+        engine.setAudioAttributes(playbackAudioAttributes)
+        engine.setOnUtteranceProgressListener(listener)
+        isTtsReady = true
+        applySettings()
+        if (playWhenReady && !usesEmbeddedNeuralVoice()) speakCurrent()
     }
 
-    private fun play() {
+    private fun play(requestFocus: Boolean = true) {
         if (!ReadingSession.hasContent()) {
+            abandonPlaybackAudioFocus()
             stopSelf()
             return
         }
-        playWhenReady = true
+
+        // A queued prewarm is allowed to finish its current native inference, but it must not
+        // continue through future pages ahead of the actual playback producer.
+        prewarmRequestId += 1
+        resumeAfterTransientFocusLoss = false
         ReadingSession.setStatus(PlaybackStatus.PREPARING)
-        startForeground(NOTIFICATION_ID, buildNotification(isPlaying = true))
+        enterForeground(isPlaying = true)
+
+        if (requestFocus) {
+            when (requestPlaybackAudioFocus()) {
+                AudioManager.AUDIOFOCUS_REQUEST_GRANTED -> Unit
+                AudioManager.AUDIOFOCUS_REQUEST_DELAYED -> {
+                    playWhenReady = false
+                    resumeAfterTransientFocusLoss = true
+                    ReadingSession.setStatus(PlaybackStatus.PAUSED)
+                    mediaNotificationController.startOrUpdate(
+                        isPlaying = false,
+                        asForeground = false,
+                    )
+                    return
+                }
+                else -> {
+                    transitionToPlaybackError(
+                        "Outro aplicativo está usando a saída de áudio. Tente novamente em instantes.",
+                    )
+                    return
+                }
+            }
+        }
+
+        playWhenReady = true
+        registerBecomingNoisyReceiver()
         if (usesEmbeddedNeuralVoice() || isTtsReady) speakCurrent()
     }
 
     private fun pause() {
+        resumeAfterTransientFocusLoss = false
+        pausePlayback(abandonFocus = true)
+    }
+
+    private fun pausePlayback(abandonFocus: Boolean) {
         playWhenReady = false
+        prewarmRequestId += 1
+        ttsUtterances.invalidate()
         cancelTtsKaraoke()
         tts?.stop()
         cancelNeuralPlayback()
         ReadingSession.setStatus(PlaybackStatus.PAUSED)
-        startForeground(NOTIFICATION_ID, buildNotification(isPlaying = false))
+        enterForeground(isPlaying = false)
+        unregisterBecomingNoisyReceiver()
+        if (abandonFocus) abandonPlaybackAudioFocus()
     }
 
     private fun move(offset: Int) {
@@ -146,6 +244,8 @@ class ReadingService : Service() {
             PlaybackStatus.PLAYING,
             PlaybackStatus.PREPARING,
         ) || playWhenReady
+        prewarmRequestId += 1
+        ttsUtterances.invalidate()
         cancelTtsKaraoke()
         tts?.stop()
         cancelNeuralPlayback()
@@ -156,7 +256,58 @@ class ReadingService : Service() {
             if (usesEmbeddedNeuralVoice() || isTtsReady) speakCurrent()
         } else {
             ReadingSession.setStatus(PlaybackStatus.PAUSED)
-            updateNotification(false)
+            mediaNotificationController.startOrUpdate(
+                isPlaying = false,
+                asForeground = false,
+            )
+        }
+    }
+
+    /**
+     * Applies the settings already written to [ReadingSession]. If audio is active, the current
+     * paragraph is restarted immediately with a fresh request/fresh queue. If it is paused, this
+     * only updates the platform engine and keeps the session paused; callers may independently use
+     * [prepareNeural] to warm an embedded voice without starting playback.
+     */
+    private fun reconfigurePlayback() {
+        val sessionStatus = ReadingSession.state.value.status
+        if (
+            !ReadingSession.hasContent() ||
+            sessionStatus !in setOf(
+                PlaybackStatus.PLAYING,
+                PlaybackStatus.PREPARING,
+                PlaybackStatus.PAUSED,
+            )
+        ) {
+            playWhenReady = false
+            stopSelf()
+            return
+        }
+        val wasPlaying = playWhenReady || sessionStatus in setOf(
+            PlaybackStatus.PLAYING,
+            PlaybackStatus.PREPARING,
+        )
+        prewarmRequestId += 1
+        playWhenReady = false
+        ttsUtterances.invalidate()
+        cancelTtsKaraoke()
+        tts?.stop()
+        cancelNeuralPlayback()
+        ReadingSession.clearWordRange()
+        applySettings()
+
+        if (wasPlaying) {
+            play(requestFocus = !hasAudioFocus)
+        } else {
+            ReadingSession.setStatus(PlaybackStatus.PAUSED)
+            if (hasForegroundNotification) {
+                mediaNotificationController.startOrUpdate(
+                    isPlaying = false,
+                    asForeground = false,
+                )
+            } else {
+                stopSelf()
+            }
         }
     }
 
@@ -167,18 +318,37 @@ class ReadingService : Service() {
         }
         val engine = tts ?: return
         val chunk = ReadingSession.currentChunk() ?: return
-        activeTtsChunk = chunk
+        ttsUtterances.invalidate()
+        val request = ttsUtterances.begin(chunk)
         cancelTtsKaraoke()
         ReadingSession.clearWordRange()
         applySettings()
         ReadingSession.setStatus(PlaybackStatus.PLAYING)
-        updateNotification(true)
-        engine.speak(
-            chunk.text,
-            TextToSpeech.QUEUE_FLUSH,
-            null,
-            "$UTTERANCE_PREFIX${ReadingSession.state.value.currentChunkIndex}",
+        mediaNotificationController.startOrUpdate(
+            isPlaying = true,
+            asForeground = false,
         )
+        val result = runCatching {
+            engine.speak(
+                chunk.text,
+                TextToSpeech.QUEUE_FLUSH,
+                null,
+                request.utteranceId,
+            )
+        }.getOrElse { failure ->
+            if (ttsUtterances.resolve(request.utteranceId) != null) {
+                ttsUtterances.invalidate()
+                transitionToPlaybackError(
+                    failure.message?.takeIf(String::isNotBlank)
+                        ?: "A voz selecionada não conseguiu iniciar este trecho.",
+                )
+            }
+            return
+        }
+        if (result == TextToSpeech.ERROR && ttsUtterances.resolve(request.utteranceId) != null) {
+            ttsUtterances.invalidate()
+            transitionToPlaybackError("A voz selecionada recusou este trecho. Tente outra voz.")
+        }
     }
 
     private fun speakCurrentWithNeuralVoice() {
@@ -191,19 +361,28 @@ class ReadingService : Service() {
         val queue = ArrayBlockingQueue<NeuralQueueItem>(NEURAL_QUEUE_CAPACITY)
         neuralQueue = queue
         ReadingSession.setStatus(PlaybackStatus.PREPARING)
-        updateNotification(true)
+        mediaNotificationController.startOrUpdate(
+            isPlaying = true,
+            asForeground = false,
+        )
 
         neuralPlaybackExecutor.execute {
             runCatching { consumeNeuralQueue(requestId, queue, voice) }
                 .onFailure { failure ->
                     if (isNeuralRequestActive(requestId)) {
-                        handleTtsError(neuralErrorMessage("reproduzir", failure))
+                        handleNeuralPlaybackError(
+                            requestId,
+                            neuralErrorMessage("reproduzir", failure),
+                        )
                     }
                 }
         }
         neuralExecutor.execute {
             try {
                 val bookId = ReadingSession.bookId
+                // One request must use one stable voice/rate profile. Settings changed by the UI
+                // are applied through ACTION_RECONFIGURE, which invalidates this request.
+                val speechRate = ReadingSession.speechRate
                 var index = startIndex
                 while (index < ReadingSession.chunkCount() && isNeuralRequestActive(requestId)) {
                     val chunk = ReadingSession.chunkAt(index) ?: break
@@ -211,7 +390,7 @@ class ReadingService : Service() {
                         bookId = bookId,
                         chunkIndex = index,
                         text = chunk.text,
-                        speechRate = ReadingSession.speechRate,
+                        speechRate = speechRate,
                         voice = voice,
                     )
                     check(audio.samples.isNotEmpty()) { "O modelo não gerou amostras de áudio." }
@@ -248,7 +427,7 @@ class ReadingService : Service() {
         val voice = embeddedNeuralVoice(ReadingSession.voiceName) ?: return
         val indices = prewarmIndices(startIndex)
 
-        neuralExecutor.execute {
+        neuralPrewarmExecutor.execute {
             try {
                 for (index in indices) {
                     if (
@@ -297,9 +476,17 @@ class ReadingService : Service() {
         voice: EmbeddedNeuralVoice,
     ): NeuralAudio {
         neuralAudioCache.load(bookId, chunkIndex, text, speechRate, voice.name)?.let { return it }
-        val generated = neuralTts.generate(text, speechRate, voice)
-        neuralAudioCache.save(bookId, chunkIndex, text, speechRate, voice.name, generated)
-        return generated
+        return synchronized(neuralGenerationLock) {
+            // Playback and prewarm use different executors. The second lookup lets playback read
+            // already cached current chunks immediately while a future prewarm is generating, but
+            // still guarantees that the native TTS engine itself is never entered concurrently.
+            neuralAudioCache.load(bookId, chunkIndex, text, speechRate, voice.name)?.let {
+                return@synchronized it
+            }
+            val generated = neuralTts.generate(text, speechRate, voice)
+            neuralAudioCache.save(bookId, chunkIndex, text, speechRate, voice.name, generated)
+            generated
+        }
     }
 
     private fun consumeNeuralQueue(
@@ -328,7 +515,10 @@ class ReadingService : Service() {
             onCompletion = { handleNeuralBookDone(requestId) },
             onError = { failure ->
                 if (requestId == neuralRequestId) {
-                    handleTtsError(neuralErrorMessage("reproduzir", failure))
+                    handleNeuralPlaybackError(
+                        requestId,
+                        neuralErrorMessage("reproduzir", failure),
+                    )
                 }
             },
             onProgress = { chunk, wordStart, wordEnd ->
@@ -337,14 +527,24 @@ class ReadingService : Service() {
                 if (ReadingSession.state.value.currentChunkIndex != chunkIndex) {
                     ReadingSession.setIndex(chunkIndex)
                     persistPosition()
-                    mainHandler.post { updateNotification(true) }
+                    mainHandler.post {
+                        mediaNotificationController.startOrUpdate(
+                            isPlaying = true,
+                            asForeground = false,
+                        )
+                    }
                 }
                 ReadingSession.setStatus(PlaybackStatus.PLAYING)
                 ReadingSession.setWordRange(chunkIndex, wordStart, wordEnd)
             },
         )
         ReadingSession.setStatus(PlaybackStatus.PLAYING)
-        mainHandler.post { updateNotification(true) }
+        mainHandler.post {
+            mediaNotificationController.startOrUpdate(
+                isPlaying = true,
+                asForeground = false,
+            )
+        }
 
         buffered.forEach { audio ->
             if (!playNeuralItem(requestId, audio, sampleRate)) return
@@ -382,7 +582,10 @@ class ReadingService : Service() {
         if (!isNeuralRequestActive(requestId)) return
         when (item) {
             NeuralQueueItem.End -> neuralPlayer.finish()
-            is NeuralQueueItem.Failure -> handleTtsError(neuralErrorMessage("preparar", item.cause))
+            is NeuralQueueItem.Failure -> handleNeuralPlaybackError(
+                requestId,
+                neuralErrorMessage("preparar", item.cause),
+            )
             is NeuralQueueItem.Audio -> Unit
         }
     }
@@ -391,9 +594,12 @@ class ReadingService : Service() {
         if (!isNeuralRequestActive(requestId)) return
         playWhenReady = false
         neuralQueue = null
+        unregisterBecomingNoisyReceiver()
+        abandonPlaybackAudioFocus()
         ReadingSession.setStatus(PlaybackStatus.STOPPED)
         persistPosition()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        hasForegroundNotification = false
         stopSelf()
     }
 
@@ -444,7 +650,8 @@ class ReadingService : Service() {
     private val listener = object : UtteranceProgressListener() {
         override fun onStart(utteranceId: String?) {
             mainHandler.post {
-                val chunkIndex = utteranceChunkIndex(utteranceId) ?: return@post
+                val request = ttsUtterances.resolve(utteranceId) ?: return@post
+                val chunkIndex = ReadingSession.indexOfChunk(request.chunk) ?: return@post
                 if (!playWhenReady || ReadingSession.state.value.currentChunkIndex != chunkIndex) return@post
                 ReadingSession.setStatus(PlaybackStatus.PLAYING)
                 startTtsKaraokeFallback(chunkIndex)
@@ -453,7 +660,8 @@ class ReadingService : Service() {
 
         override fun onRangeStart(utteranceId: String?, start: Int, end: Int, frame: Int) {
             mainHandler.post {
-                val chunkIndex = utteranceChunkIndex(utteranceId) ?: return@post
+                val request = ttsUtterances.resolve(utteranceId) ?: return@post
+                val chunkIndex = ReadingSession.indexOfChunk(request.chunk) ?: return@post
                 if (!playWhenReady || ReadingSession.state.value.currentChunkIndex != chunkIndex) return@post
                 hasNativeRangeCallbacks = true
                 ttsFallbackRunnable?.let(mainHandler::removeCallbacks)
@@ -463,7 +671,8 @@ class ReadingService : Service() {
 
         override fun onDone(utteranceId: String?) {
             mainHandler.post {
-                val chunkIndex = utteranceChunkIndex(utteranceId) ?: return@post
+                val request = ttsUtterances.complete(utteranceId) ?: return@post
+                val chunkIndex = ReadingSession.indexOfChunk(request.chunk) ?: return@post
                 if (ReadingSession.state.value.currentChunkIndex != chunkIndex) return@post
                 cancelTtsKaraoke()
                 handleChunkDone()
@@ -472,18 +681,26 @@ class ReadingService : Service() {
 
         override fun onStop(utteranceId: String?, interrupted: Boolean) {
             mainHandler.post {
-                val chunkIndex = utteranceChunkIndex(utteranceId) ?: return@post
-                if (ReadingSession.state.value.currentChunkIndex == chunkIndex) cancelTtsKaraoke()
+                val request = ttsUtterances.complete(utteranceId) ?: return@post
+                val chunkIndex = ReadingSession.indexOfChunk(request.chunk) ?: return@post
+                if (ReadingSession.state.value.currentChunkIndex == chunkIndex) {
+                    cancelTtsKaraoke()
+                    if (playWhenReady) {
+                        transitionToPlaybackError(
+                            "A voz selecionada interrompeu a leitura. Tente reproduzir novamente.",
+                        )
+                    }
+                }
             }
         }
 
         @Deprecated("Deprecated in Java")
         override fun onError(utteranceId: String?) {
-            handleTtsError()
+            handlePlatformTtsError(utteranceId)
         }
 
         override fun onError(utteranceId: String?, errorCode: Int) {
-            handleTtsError()
+            handlePlatformTtsError(utteranceId)
         }
     }
 
@@ -524,20 +741,16 @@ class ReadingService : Service() {
         hasNativeRangeCallbacks = false
     }
 
-    private fun utteranceChunkIndex(utteranceId: String?): Int? =
-        utteranceId
-            ?.takeIf { it.startsWith(UTTERANCE_PREFIX) }
-            ?.let {
-                activeTtsChunk?.let(ReadingSession::indexOfChunk)
-                    ?: it.removePrefix(UTTERANCE_PREFIX).toIntOrNull()
-            }
-
     private fun handleChunkDone() {
         if (!playWhenReady) return
         if (ReadingSession.isAtEnd()) {
+            playWhenReady = false
+            unregisterBecomingNoisyReceiver()
+            abandonPlaybackAudioFocus()
             ReadingSession.setStatus(PlaybackStatus.STOPPED)
             persistPosition()
             stopForeground(STOP_FOREGROUND_REMOVE)
+            hasForegroundNotification = false
             stopSelf()
         } else {
             ReadingSession.moveBy(+1)
@@ -546,33 +759,67 @@ class ReadingService : Service() {
         }
     }
 
-    private fun handleTtsError(message: String = "A voz selecionada não conseguiu ler este trecho. Tente outra voz.") {
+    private fun handlePlatformTtsError(utteranceId: String?) {
         mainHandler.post {
-            playWhenReady = false
-            cancelTtsKaraoke()
-            cancelNeuralPlayback()
-            ReadingSession.setStatus(
-                PlaybackStatus.ERROR,
-                message,
+            if (ttsUtterances.complete(utteranceId) == null) return@post
+            transitionToPlaybackError(
+                "A voz selecionada não conseguiu ler este trecho. Tente outra voz.",
             )
-            updateNotification(false)
         }
+    }
+
+    private fun handleNeuralPlaybackError(requestId: Long, message: String) {
+        mainHandler.post {
+            // The executor may discover a failure immediately before Pause/Next/Reconfigure
+            // invalidates its request. Never let that stale failure stop a newer playback.
+            if (isNeuralRequestActive(requestId)) transitionToPlaybackError(message)
+        }
+    }
+
+    private fun transitionToPlaybackError(message: String) {
+        playWhenReady = false
+        resumeAfterTransientFocusLoss = false
+        prewarmRequestId += 1
+        ttsUtterances.invalidate()
+        cancelTtsKaraoke()
+        tts?.stop()
+        cancelNeuralPlayback()
+        unregisterBecomingNoisyReceiver()
+        abandonPlaybackAudioFocus()
+        ReadingSession.setStatus(PlaybackStatus.ERROR, message)
+        mediaNotificationController.startOrUpdate(
+            isPlaying = false,
+            asForeground = false,
+        )
+        if (hasForegroundNotification) {
+            stopForeground(STOP_FOREGROUND_DETACH)
+            hasForegroundNotification = false
+        }
+        stopSelf()
     }
 
     private fun stopReading() {
         playWhenReady = false
+        resumeAfterTransientFocusLoss = false
         prewarmRequestId += 1
+        ttsUtterances.invalidate()
         cancelTtsKaraoke()
         tts?.stop()
         cancelNeuralPlayback()
+        unregisterBecomingNoisyReceiver()
+        abandonPlaybackAudioFocus()
         ReadingSession.setStatus(PlaybackStatus.STOPPED)
         persistPosition()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        hasForegroundNotification = false
         stopSelf()
     }
 
     private fun persistPosition() {
-        preferences.savePosition(ReadingSession.state.value.currentChunkIndex)
+        preferences.savePosition(
+            bookId = ReadingSession.bookId,
+            chunkIndex = ReadingSession.state.value.currentChunkIndex,
+        )
     }
 
     private fun usesEmbeddedNeuralVoice(): Boolean =
@@ -588,209 +835,104 @@ class ReadingService : Service() {
         neuralQueue = null
     }
 
-    private fun createNotificationChannel() {
-        val channel = NotificationChannel(
-            CHANNEL_ID,
-            getString(R.string.notification_channel_name),
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = getString(R.string.notification_channel_description)
-        }
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    private fun requestPlaybackAudioFocus(): Int {
+        val result = runCatching { audioManager.requestAudioFocus(audioFocusRequest) }
+            .getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        audioFocusRequested = result != AudioManager.AUDIOFOCUS_REQUEST_FAILED
+        hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        return result
     }
 
-    private fun initializeMediaSession() {
-        mediaSession = MediaSession(this, MEDIA_SESSION_TAG).apply {
-            setCallback(object : MediaSession.Callback() {
-                override fun onPlay() {
-                    play()
-                }
-
-                override fun onPause() {
-                    pause()
-                }
-
-                override fun onSkipToNext() {
-                    move(+1)
-                }
-
-                override fun onSkipToPrevious() {
-                    move(-1)
-                }
-
-                override fun onStop() {
-                    stopReading()
-                }
-            })
-            setFlags(
-                MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
-                    MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS,
-            )
-            setSessionActivity(openAppPendingIntent())
-            setPlaybackToLocal(
-                AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                    .build(),
-            )
-            isActive = true
-        }
+    private fun abandonPlaybackAudioFocus() {
+        val shouldAbandon = audioFocusRequested
+        audioFocusRequested = false
+        hasAudioFocus = false
+        if (shouldAbandon) runCatching { audioManager.abandonAudioFocusRequest(audioFocusRequest) }
     }
 
-    private fun buildNotification(isPlaying: Boolean): Notification {
-        updateMediaSession(isPlaying)
-        val playPauseAction = if (isPlaying) ACTION_PAUSE else ACTION_PLAY
-        val playPauseIcon = if (isPlaying) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play
-        val playPauseLabel = if (isPlaying) "Pausar" else "Continuar"
-
-        return Notification.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher)
-            .setContentTitle(ReadingSession.title)
-            .setContentText(ReadingSession.currentChunk()?.text?.take(100) ?: "Leitura em voz alta")
-            .setContentIntent(openAppPendingIntent())
-            .setOngoing(isPlaying)
-            .setOnlyAlertOnce(true)
-            .setCategory(Notification.CATEGORY_TRANSPORT)
-            .setVisibility(Notification.VISIBILITY_PUBLIC)
-            .setShowWhen(false)
-            .addAction(
-                Notification.Action.Builder(
-                    android.R.drawable.ic_media_previous,
-                    "Anterior",
-                    servicePendingIntent(ACTION_PREVIOUS, 1),
-                ).build(),
+    private fun registerBecomingNoisyReceiver() {
+        if (noisyReceiverRegistered) return
+        noisyReceiverRegistered = runCatching {
+            ContextCompat.registerReceiver(
+                this,
+                becomingNoisyReceiver,
+                IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
             )
-            .addAction(
-                Notification.Action.Builder(
-                    playPauseIcon,
-                    playPauseLabel,
-                    servicePendingIntent(playPauseAction, 2),
-                ).build(),
-            )
-            .addAction(
-                Notification.Action.Builder(
-                    android.R.drawable.ic_media_next,
-                    "Próximo",
-                    servicePendingIntent(ACTION_NEXT, 3),
-                ).build(),
-            )
-            .setStyle(
-                Notification.MediaStyle()
-                    .setMediaSession(mediaSession.sessionToken)
-                    .setShowActionsInCompactView(0, 1, 2),
-            )
-            .build()
+            true
+        }.getOrDefault(false)
     }
 
-    private fun openAppPendingIntent(): PendingIntent =
-        PendingIntent.getActivity(
-            this,
-            0,
-            Intent(this, MainActivity::class.java).apply {
-                action = MainActivity.ACTION_OPEN_ACTIVE_READING
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    private fun unregisterBecomingNoisyReceiver() {
+        if (!noisyReceiverRegistered) return
+        runCatching { unregisterReceiver(becomingNoisyReceiver) }
+        noisyReceiverRegistered = false
+    }
+
+    private fun enterForeground(isPlaying: Boolean) {
+        mediaNotificationController.startOrUpdate(
+            isPlaying = isPlaying,
+            asForeground = true,
         )
-
-    private fun updateMediaSession(isPlaying: Boolean) {
-        val sessionStatus = ReadingSession.state.value.status
-        val state = when {
-            isPlaying && sessionStatus == PlaybackStatus.PREPARING -> PlaybackState.STATE_BUFFERING
-            isPlaying -> PlaybackState.STATE_PLAYING
-            sessionStatus == PlaybackStatus.ERROR -> PlaybackState.STATE_ERROR
-            sessionStatus == PlaybackStatus.STOPPED -> PlaybackState.STATE_STOPPED
-            else -> PlaybackState.STATE_PAUSED
-        }
-        mediaSession.setMetadata(
-            MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, ReadingSession.title)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, getString(R.string.app_name))
-                .putString(
-                    MediaMetadata.METADATA_KEY_DISPLAY_DESCRIPTION,
-                    ReadingSession.currentChunk()?.text?.take(160) ?: "Leitura em voz alta",
-                )
-                .build(),
-        )
-        val playbackState = PlaybackState.Builder()
-            .setActions(MEDIA_SESSION_ACTIONS)
-            .setState(state, PlaybackState.PLAYBACK_POSITION_UNKNOWN, if (isPlaying) 1f else 0f)
-        ReadingSession.state.value.error?.let(playbackState::setErrorMessage)
-        mediaSession.setPlaybackState(playbackState.build())
-        mediaSession.isActive = true
-    }
-
-    private fun servicePendingIntent(action: String, requestCode: Int): PendingIntent =
-        PendingIntent.getService(
-            this,
-            requestCode,
-            Intent(this, ReadingService::class.java).setAction(action),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-
-    private fun updateNotification(isPlaying: Boolean) {
-        getSystemService(NotificationManager::class.java)
-            .notify(NOTIFICATION_ID, buildNotification(isPlaying))
+        hasForegroundNotification = true
     }
 
     override fun onDestroy() {
+        playWhenReady = false
+        resumeAfterTransientFocusLoss = false
         prewarmRequestId += 1
+        ttsUtterances.invalidate()
         cancelTtsKaraoke()
         cancelNeuralPlayback()
+        unregisterBecomingNoisyReceiver()
+        abandonPlaybackAudioFocus()
+        ttsEngineGeneration += 1
         tts?.stop()
         tts?.shutdown()
         tts = null
-        neuralExecutor.execute { neuralTts.release() }
+        neuralExecutor.execute {
+            synchronized(neuralGenerationLock) { neuralTts.release() }
+        }
         neuralExecutor.shutdown()
+        neuralPrewarmExecutor.shutdown()
         neuralPlaybackExecutor.shutdown()
-        mediaSession.isActive = false
-        mediaSession.release()
+        mediaNotificationController.release()
         super.onDestroy()
     }
 
     companion object {
-        private const val CHANNEL_ID = "book_reading"
-        private const val MEDIA_SESSION_TAG = "LeitorLocalReading"
-        private const val NOTIFICATION_ID = 41
         private const val NEURAL_QUEUE_CAPACITY = 8
         private const val NEURAL_PREBUFFER_CHUNKS = 2
         private const val NEURAL_PREWARM_PAGES = 3
         private const val NEURAL_PREWARM_MAX_CHUNKS = 18
         private const val NEURAL_QUEUE_WAIT_MS = 200L
         private const val KARAOKE_INTERVAL_MILLIS = 70L
-        private const val UTTERANCE_PREFIX = "book-"
         private const val ACTION_PLAY = "com.leitorlocal.PLAY"
         private const val ACTION_PREPARE_NEURAL = "com.leitorlocal.PREPARE_NEURAL"
         private const val ACTION_PAUSE = "com.leitorlocal.PAUSE"
         private const val ACTION_NEXT = "com.leitorlocal.NEXT"
         private const val ACTION_PREVIOUS = "com.leitorlocal.PREVIOUS"
-        private const val ACTION_RELOAD_ENGINE = "com.leitorlocal.RELOAD_ENGINE"
+        private const val ACTION_RECONFIGURE = "com.leitorlocal.RECONFIGURE"
         private const val ACTION_STOP = "com.leitorlocal.STOP"
-        private const val MEDIA_SESSION_ACTIONS =
-            PlaybackState.ACTION_PLAY or
-                PlaybackState.ACTION_PAUSE or
-                PlaybackState.ACTION_PLAY_PAUSE or
-                PlaybackState.ACTION_SKIP_TO_PREVIOUS or
-                PlaybackState.ACTION_SKIP_TO_NEXT or
-                PlaybackState.ACTION_STOP
-
         fun play(context: Context) = ContextCompat.startForegroundService(
             context,
             Intent(context, ReadingService::class.java).setAction(ACTION_PLAY),
         )
 
         fun prepareNeural(context: Context) {
-            runCatching { send(context, ACTION_PREPARE_NEURAL) }
+            safeSend(context, ACTION_PREPARE_NEURAL)
         }
 
-        fun pause(context: Context) = send(context, ACTION_PAUSE)
-        fun next(context: Context) = send(context, ACTION_NEXT)
-        fun previous(context: Context) = send(context, ACTION_PREVIOUS)
-        fun reloadEngine(context: Context) = send(context, ACTION_RELOAD_ENGINE)
-        fun stop(context: Context) = send(context, ACTION_STOP)
+        fun pause(context: Context) = safeSend(context, ACTION_PAUSE)
+        fun next(context: Context) = safeSend(context, ACTION_NEXT)
+        fun previous(context: Context) = safeSend(context, ACTION_PREVIOUS)
+        fun reconfigure(context: Context) = safeSend(context, ACTION_RECONFIGURE)
+        fun stop(context: Context) = safeSend(context, ACTION_STOP)
 
-        private fun send(context: Context, action: String) {
-            context.startService(Intent(context, ReadingService::class.java).setAction(action))
+        private fun safeSend(context: Context, action: String) {
+            runCatching {
+                context.startService(Intent(context, ReadingService::class.java).setAction(action))
+            }
         }
     }
 }

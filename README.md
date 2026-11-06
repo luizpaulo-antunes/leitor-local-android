@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.10.4.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.11.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.10.4.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.11.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -57,6 +57,11 @@ estão disponíveis neste repositório.
 - Identifica figuras acompanhadas por legenda ou marcação de acessibilidade no PDF.
 - Extrai e mostra a figura em destaque durante a narração.
 - Combina legenda, descrição acessível e OCR offline para narrar o conteúdo visual sem enviar o livro para a internet.
+- Respeita o foco de áudio do Android e pausa ao desconectar fones, evitando que a leitura continue no alto-falante.
+- Ignora callbacks atrasados do TTS e reinicia o trecho atual de forma segura ao trocar voz ou velocidade.
+- Mantém título e trecho do livro ocultos na visualização pública da tela bloqueada.
+- Associa o progresso explicitamente ao livro e grava apenas quando o trecho muda, reduzindo I/O durante o karaokê.
+- Valida caches pelo tamanho e pela data de modificação do PDF e limita o espaço usado por artefatos regeneráveis.
 
 ## Figuras durante a leitura
 
@@ -117,8 +122,13 @@ Studio ou diretamente pelo Gradle, em um ambiente que tenha o Android SDK
 configurado:
 
 ```bash
-./gradlew assembleDebug
+./gradlew testDebugUnitTest lintDebug assembleDebug
 ```
+
+O mesmo conjunto de verificações é executado automaticamente pelo GitHub Actions
+a cada alteração enviada à branch principal ou a um pull request. O workflow
+serve para validar o código; o APK instalável e assinado de forma compatível com
+as versões anteriores é publicado somente na página de Releases.
 
 Para manter o histórico Git leve, o arquivo ONNX da voz Dii fica anexado à
 release v0.8.0. Em um clone novo, o primeiro build baixa esse arquivo uma única

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.net.Uri
+import com.leitorlocal.data.DocumentFingerprint
 import com.leitorlocal.text.FigureCaption
 import com.tom_roush.pdfbox.cos.COSBase
 import com.tom_roush.pdfbox.cos.COSDictionary
@@ -15,7 +16,6 @@ import com.tom_roush.pdfbox.pdmodel.documentinterchange.logicalstructure.PDStruc
 import com.tom_roush.pdfbox.pdmodel.graphics.form.PDFormXObject
 import com.tom_roush.pdfbox.pdmodel.graphics.image.PDImageXObject
 import java.io.File
-import java.security.MessageDigest
 import kotlin.math.ceil
 
 data class AnalyzedFigure(
@@ -40,7 +40,11 @@ class PdfFigureAnalyzer(private val context: Context) {
         }).sorted()
         if (targetPages.isEmpty()) return emptyMap()
 
-        val bookDirectory = File(context.filesDir, "$FIGURE_DIRECTORY/${bookUri.digest()}")
+        val fingerprint = DocumentFingerprint.resolve(context, bookUri)
+        val bookDirectory = File(
+            context.filesDir,
+            "$FIGURE_DIRECTORY/${fingerprint.cacheKey(bookUri)}",
+        )
             .apply { mkdirs() }
         val result = mutableMapOf<Int, List<AnalyzedFigure>>()
         val ocr = FigureOcr()
@@ -65,21 +69,24 @@ class PdfFigureAnalyzer(private val context: Context) {
                         val alternative = alternatives.getOrNull(figureIndex).orEmpty()
                         val image = images.getOrNull(figureIndex)
                         val bitmap = image?.decodeForAnalysis()
-                        val imagePath = bitmap?.let {
-                            saveFigure(it, bookDirectory, pageIndex, figureIndex)
+                        try {
+                            val imagePath = bitmap?.let {
+                                saveFigure(it, bookDirectory, pageIndex, figureIndex)
+                            }
+                            val ocrText = bitmap?.let { ocr.recognize(it) }.orEmpty()
+                            add(
+                                AnalyzedFigure(
+                                    pageIndex = pageIndex,
+                                    relativePosition = caption?.relativePosition ?: 0.5f,
+                                    imagePath = imagePath,
+                                    caption = caption?.text.orEmpty(),
+                                    alternativeText = alternative,
+                                    ocrText = ocrText,
+                                ),
+                            )
+                        } finally {
+                            bitmap?.recycle()
                         }
-                        val ocrText = bitmap?.let { ocr.recognize(it) }.orEmpty()
-                        bitmap?.recycle()
-                        add(
-                            AnalyzedFigure(
-                                pageIndex = pageIndex,
-                                relativePosition = caption?.relativePosition ?: 0.5f,
-                                imagePath = imagePath,
-                                caption = caption?.text.orEmpty(),
-                                alternativeText = alternative,
-                                ocrText = ocrText,
-                            ),
-                        )
                     }
                 }
                 onProgress(progressIndex + 1, targetPages.size)
@@ -164,12 +171,8 @@ class PdfFigureAnalyzer(private val context: Context) {
         destination.absolutePath
     }.getOrNull()
 
-    private fun Uri.digest(): String = MessageDigest.getInstance("SHA-256")
-        .digest(toString().toByteArray())
-        .joinToString("") { byte -> "%02x".format(byte) }
-
     companion object {
-        private const val FIGURE_DIRECTORY = "book_figures_v1"
+        const val FIGURE_DIRECTORY = "book_figures_v2"
         private const val MIN_IMAGE_SIDE = 160
         private const val MIN_IMAGE_AREA = 80_000L
         private const val MAX_IMAGE_SIDE = 1_800

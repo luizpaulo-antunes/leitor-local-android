@@ -15,13 +15,13 @@ object ReadingSession {
     private val mutableState = MutableStateFlow(PlaybackState())
     val state: StateFlow<PlaybackState> = mutableState.asStateFlow()
 
-    var title: String = "Leitor Local"
+    @Volatile var title: String = "Leitor Local"
         private set
-    var bookId: String = ""
+    @Volatile var bookId: String = ""
         private set
-    var speechRate: Float = 1f
+    @Volatile var speechRate: Float = 1f
         private set
-    var voiceName: String? = null
+    @Volatile var voiceName: String? = null
         private set
 
     @Synchronized

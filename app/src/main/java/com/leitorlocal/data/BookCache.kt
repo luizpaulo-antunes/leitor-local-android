@@ -11,17 +11,16 @@ import com.leitorlocal.model.SpeechTextRole
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.security.MessageDigest
 
 class BookCache(private val context: Context) {
-    private val directory = File(context.filesDir, "processed_books_v5").apply { mkdirs() }
+    private val directory = File(context.filesDir, CACHE_DIRECTORY).apply { mkdirs() }
 
     @Synchronized
     fun load(uri: Uri, title: String): BookContent? = runCatching {
         val file = cacheFile(uri)
         if (!file.isFile) return null
         val root = JSONObject(file.readText())
-        if (root.optLong("sourceSize", -2L) != sourceSize(uri)) return null
+        if (!DocumentFingerprint.resolve(context, uri).matches(root)) return null
 
         val chunksJson = root.getJSONArray("chunks")
         val chunks = buildList {
@@ -64,6 +63,18 @@ class BookCache(private val context: Context) {
             }
         }
         if (chunks.isEmpty()) return null
+        if (
+            chunks.any { chunk ->
+                chunk.figure?.imagePath
+                    ?.takeIf(String::isNotBlank)
+                    ?.let { path -> !File(path).isFile }
+                    ?: false
+            }
+        ) {
+            file.delete()
+            return null
+        }
+        file.setLastModified(System.currentTimeMillis())
         BookContent(
             uri = uri.toString(),
             title = title,
@@ -107,10 +118,10 @@ class BookCache(private val context: Context) {
                 chunks.put(item)
             }
             val root = JSONObject()
-                .put("sourceSize", sourceSize(uri))
                 .put("pageCount", book.pageCount)
                 .put("pagesWithoutText", book.pagesWithoutText)
                 .put("chunks", chunks)
+            DocumentFingerprint.resolve(context, uri).writeTo(root)
 
             val destination = cacheFile(uri)
             val temporary = File(directory, "${destination.name}.tmp")
@@ -123,13 +134,11 @@ class BookCache(private val context: Context) {
     }
 
     private fun cacheFile(uri: Uri): File {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(uri.toString().toByteArray())
-            .joinToString("") { byte -> "%02x".format(byte) }
+        val digest = DocumentFingerprint.sha256(uri.toString())
         return File(directory, "$digest.json")
     }
 
-    private fun sourceSize(uri: Uri): Long = runCatching {
-        context.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
-    }.getOrDefault(-1L)
+    companion object {
+        const val CACHE_DIRECTORY = "processed_books_v6"
+    }
 }

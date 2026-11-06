@@ -9,11 +9,14 @@ import java.util.Locale
 class TtsVoiceCatalog(context: Context) {
     private val appContext = context.applicationContext
     private var engine: TextToSpeech? = null
+    private var generation = 0L
 
     fun load(onResult: (List<VoiceOption>) -> Unit) {
+        val requestGeneration = ++generation
         engine?.shutdown()
         engine = null
         engine = TextToSpeech(appContext) { status ->
+            if (requestGeneration != generation) return@TextToSpeech
             val tts = engine
             if (status != TextToSpeech.SUCCESS || tts == null) {
                 onResult(emptyList())
@@ -48,6 +51,7 @@ class TtsVoiceCatalog(context: Context) {
     }
 
     fun close() {
+        generation += 1
         engine?.shutdown()
         engine = null
     }

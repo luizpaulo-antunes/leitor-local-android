@@ -2,11 +2,13 @@ package com.leitorlocal
 
 import android.app.Application
 import android.net.Uri
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.core.net.toUri
 import com.leitorlocal.data.ReaderPreferences
 import com.leitorlocal.data.BookCoverStore
+import com.leitorlocal.data.ReaderCacheMaintenance
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.BookContent
 import com.leitorlocal.model.ReaderUiState
@@ -19,8 +21,13 @@ import com.leitorlocal.speech.TtsVoiceCatalog
 import com.leitorlocal.speech.EMBEDDED_NEURAL_VOICES
 import com.leitorlocal.speech.embeddedNeuralVoice
 import com.leitorlocal.model.VoiceOption
+import java.io.File
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -47,11 +54,24 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var renderJob: Job? = null
     private var ocrJob: Job? = null
     private var lastRenderedPage = -1
+    private var lastVoiceRefreshAt = 0L
+    private val loadRequests = LoadRequestTracker()
+    private val persistedPosition = PlaybackPositionTracker()
+    private val cacheMaintenanceJob = viewModelScope.async(Dispatchers.IO) {
+        runCatching {
+            ReaderCacheMaintenance(application).run(
+                activeBookId = ReadingSession.bookId.takeIf(String::isNotBlank),
+            )
+        }
+    }
 
     init {
         observePlayback()
-        refreshVoices()
-        refreshLibraryCovers()
+        refreshVoices(force = true)
+        viewModelScope.launch {
+            cacheMaintenanceJob.await()
+            refreshLibraryCovers()
+        }
     }
 
     fun openBook(uri: Uri, title: String) {
@@ -73,9 +93,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     fun resumeActiveReading(): Boolean = restoreActiveReading(expectedBookId = null)
 
     fun showLibrary() {
+        loadRequests.invalidate()
+        loadJob?.cancel()
+        ocrJob?.cancel()
         if (uiState.value.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) pause()
         mutableUiState.update {
-            it.copy(showingLibrary = true, library = preferences.library())
+            it.copy(
+                isLoading = false,
+                loadingMessage = "",
+                showingLibrary = true,
+                isOcrRunning = false,
+                ocrMessage = "",
+                library = preferences.library(),
+            )
         }
     }
 
@@ -100,13 +130,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         mutableUiState.update { it.copy(speechRate = bounded) }
         ReadingSession.updateSettings(bounded, uiState.value.selectedVoiceName)
         preferences.saveSettings(bounded, uiState.value.selectedVoiceName)
+        if (canReconfigurePlayback()) ReadingService.reconfigure(getApplication())
     }
 
     fun selectVoice(name: String?) {
+        if (name == uiState.value.selectedVoiceName) return
         mutableUiState.update { it.copy(selectedVoiceName = name) }
         ReadingSession.updateSettings(uiState.value.speechRate, name)
         preferences.saveSettings(uiState.value.speechRate, name)
-        if (uiState.value.book != null && embeddedNeuralVoice(name) != null) {
+        if (canReconfigurePlayback()) ReadingService.reconfigure(getApplication())
+        if (
+            canReconfigurePlayback() &&
+            embeddedNeuralVoice(name) != null
+        ) {
             ReadingService.prepareNeural(getApplication())
         }
     }
@@ -118,16 +154,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    fun refreshVoices() {
-        if (
-            ReadingSession.hasContent() &&
-            ReadingSession.state.value.status !in setOf(
-                PlaybackStatus.PLAYING,
-                PlaybackStatus.PREPARING,
-            )
-        ) {
-            ReadingService.reloadEngine(getApplication())
-        }
+    fun refreshVoices(force: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        if (!force && now - lastVoiceRefreshAt < VOICE_REFRESH_INTERVAL_MILLIS) return
+        lastVoiceRefreshAt = now
         voiceCatalog.load { voices ->
             mutableUiState.update { state ->
                 val neuralVoices = EMBEDDED_NEURAL_VOICES.map { voice ->
@@ -155,6 +185,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         title: String,
         startIndex: Int,
     ) {
+        val requestToken = loadRequests.begin()
         loadJob?.cancel()
         ocrJob?.cancel()
         if (ReadingSession.state.value.status != PlaybackStatus.STOPPED) {
@@ -175,17 +206,26 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
 
         loadJob = viewModelScope.launch {
-            runCatching {
-                parser.parse(uri, title) { message ->
-                    mutableUiState.update {
-                        it.copy(loadingMessage = message)
+            try {
+                cacheMaintenanceJob.await()
+                val book = parser.parse(uri, title) { message ->
+                    mutableUiState.update { state ->
+                        if (!loadRequests.isCurrent(requestToken)) state else state.copy(
+                            loadingMessage = message,
+                        )
                     }
                 }
-            }.onSuccess { book ->
+                if (!loadRequests.isCurrent(requestToken)) return@launch
                 preferences.saveBook(book.uri, book.title, book.chunks.size, book.pageCount)
-                runCatching { coverStore.ensureCover(book.uri.toUri()) }
-                    .getOrNull()
-                    ?.let { preferences.saveCover(book.uri, it) }
+                val coverPath = try {
+                    coverStore.ensureCover(book.uri.toUri())
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Throwable) {
+                    null
+                }
+                if (!loadRequests.isCurrent(requestToken)) return@launch
+                coverPath?.let { preferences.saveCover(book.uri, it) }
                 val restoredIndex = startIndex.coerceIn(0, book.chunks.lastIndex)
                 val currentState = mutableUiState.value
                 ReadingSession.configure(
@@ -198,7 +238,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     pageCount = book.pageCount,
                     pagesWithoutText = book.pagesWithoutText,
                 )
-                preferences.savePosition(restoredIndex)
+                preferences.savePosition(book.uri, restoredIndex)
+                persistedPosition.markPersisted(book.uri, restoredIndex)
                 mutableUiState.update {
                     it.copy(
                         isLoading = false,
@@ -214,7 +255,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     initialBook = book,
                     priorityPage = book.chunks[restoredIndex].pageIndex,
                 )
-            }.onFailure { failure ->
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                if (!loadRequests.isCurrent(requestToken)) return@launch
                 mutableUiState.update {
                     it.copy(
                         isLoading = false,
@@ -263,6 +307,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             )
                         }
                     }
+                    currentCoroutineContext().ensureActive()
+                    if (mutableUiState.value.book?.uri != bookUri) return@launch
                     if (result.book != workingBook) {
                         workingBook = result.book
                         ReadingSession.replaceBook(workingBook)
@@ -273,7 +319,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                             workingBook.chunks.size,
                             workingBook.pageCount,
                         )
-                        preferences.savePosition(currentIndex)
+                        preferences.savePosition(workingBook.uri, currentIndex)
+                        persistedPosition.markPersisted(workingBook.uri, currentIndex)
                         mutableUiState.update { state ->
                             if (state.book?.uri != bookUri) state else state.copy(
                                 book = workingBook,
@@ -283,19 +330,19 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         }
                     }
                 }
-            } catch (cancelled: CancellationException) {
-                throw cancelled
-            } catch (failure: Throwable) {
-                mutableUiState.update { state ->
-                    if (state.book?.uri != bookUri) state else state.copy(
-                        ocrMessage = "O OCR offline continuará quando este livro for aberto novamente.",
-                    )
-                }
-            } finally {
                 mutableUiState.update { state ->
                     if (state.book?.uri != bookUri) state else state.copy(
                         isOcrRunning = false,
                         ocrMessage = "",
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                mutableUiState.update { state ->
+                    if (state.book?.uri != bookUri) state else state.copy(
+                        isOcrRunning = false,
+                        ocrMessage = "O OCR offline continuará quando este livro for aberto novamente.",
                     )
                 }
             }
@@ -322,8 +369,10 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 mutableUiState.update { it.copy(playback = playback) }
                 val book = mutableUiState.value.book ?: return@collect
                 val page = book.chunks.getOrNull(playback.currentChunkIndex)?.pageIndex ?: return@collect
-                preferences.savePosition(playback.currentChunkIndex)
-                mutableUiState.update { it.copy(library = preferences.library()) }
+                if (persistedPosition.shouldPersist(book.uri, playback.currentChunkIndex)) {
+                    preferences.savePosition(book.uri, playback.currentChunkIndex)
+                    mutableUiState.update { it.copy(library = preferences.library()) }
+                }
                 if (page != lastRenderedPage) renderPage(book.uri, page)
             }
         }
@@ -332,14 +381,28 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private fun refreshLibraryCovers() {
         viewModelScope.launch {
             preferences.library()
-                .filter { it.coverPath.isNullOrBlank() }
+                .filter { book ->
+                    book.coverPath.isNullOrBlank() || !File(book.coverPath).isFile
+                }
                 .forEach { book ->
-                    runCatching { coverStore.ensureCover(book.uri.toUri()) }
-                        .getOrNull()
-                        ?.let { path ->
-                            preferences.saveCover(book.uri, path)
-                            mutableUiState.update { it.copy(library = preferences.library()) }
+                    if (!book.coverPath.isNullOrBlank()) {
+                        // Force a distinct UI state before recreating the same deterministic path.
+                        preferences.saveCover(book.uri, "")
+                        mutableUiState.update { it.copy(library = preferences.library()) }
+                    }
+                    val path = try {
+                        coverStore.ensureCover(book.uri.toUri())
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Throwable) {
+                        null
+                    }
+                    path?.let {
+                        preferences.saveCover(book.uri, it)
+                        mutableUiState.update { state ->
+                            state.copy(library = preferences.library())
                         }
+                    }
                 }
         }
     }
@@ -358,6 +421,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val book = ReadingSession.bookSnapshot() ?: return false
         if (expectedBookId != null && book.uri != expectedBookId) return false
 
+        loadRequests.invalidate()
         loadJob?.cancel()
         ocrJob?.cancel()
         lastRenderedPage = -1
@@ -381,6 +445,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             .getOrNull(playback.currentChunkIndex)
             ?.pageIndex
             ?: 0
+        persistedPosition.markPersisted(book.uri, playback.currentChunkIndex)
         renderPage(book.uri, currentPage)
         startProgressiveOcr(initialBook = book, priorityPage = currentPage)
         return true
@@ -391,14 +456,37 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         lastRenderedPage = pageIndex
         renderJob?.cancel()
         renderJob = viewModelScope.launch {
-            val bitmap = runCatching { renderer.render(uri.toUri(), pageIndex) }.getOrNull()
-            if (lastRenderedPage == pageIndex) {
-                mutableUiState.update { it.copy(pageBitmap = bitmap) }
+            var bitmap: android.graphics.Bitmap? = null
+            try {
+                bitmap = renderer.render(uri.toUri(), pageIndex)
+                currentCoroutineContext().ensureActive()
+                if (lastRenderedPage == pageIndex) {
+                    mutableUiState.update { it.copy(pageBitmap = bitmap) }
+                    bitmap = null // ownership passed to UI state
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Throwable) {
+                if (lastRenderedPage == pageIndex) lastRenderedPage = -1
+            } finally {
+                bitmap?.recycle()
             }
         }
     }
 
+    private fun canReconfigurePlayback(): Boolean =
+        uiState.value.book != null &&
+            ReadingSession.hasContent() &&
+            ReadingSession.state.value.status in setOf(
+                PlaybackStatus.PLAYING,
+                PlaybackStatus.PREPARING,
+                PlaybackStatus.PAUSED,
+            )
+
     override fun onCleared() {
+        loadRequests.invalidate()
+        loadJob?.cancel()
+        renderJob?.cancel()
         ocrJob?.cancel()
         parser.close()
         voiceCatalog.close()
@@ -406,5 +494,6 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     companion object {
         private const val OCR_PAGES_AHEAD = 3
+        private const val VOICE_REFRESH_INTERVAL_MILLIS = 30_000L
     }
 }

@@ -14,6 +14,8 @@ import com.leitorlocal.text.FigureDescriptionComposer
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class PdfBookParser(private val context: Context) {
@@ -29,6 +31,7 @@ class PdfBookParser(private val context: Context) {
         title: String,
         onProgress: (message: String) -> Unit,
     ): BookContent = withContext(Dispatchers.IO) {
+        currentCoroutineContext().ensureActive()
         cache.load(uri, title)?.let { cached ->
             onProgress("Livro pronto.")
             return@withContext cached
@@ -47,6 +50,7 @@ class PdfBookParser(private val context: Context) {
                 }
 
                 for (pageIndex in 0 until totalPages) {
+                    currentCoroutineContext().ensureActive()
                     stripper.startPage = pageIndex + 1
                     stripper.endPage = pageIndex + 1
                     rawPages += stripper.getText(document)
@@ -59,8 +63,10 @@ class PdfBookParser(private val context: Context) {
                         )
                     }
                     onProgress("Extraindo texto da página ${pageIndex + 1} de $totalPages…")
+                    currentCoroutineContext().ensureActive()
                 }
 
+                currentCoroutineContext().ensureActive()
                 val captionsByPage = rawPages.map(TextPreprocessor::extractFigureCaptions)
                 val figuresByPage = PdfFigureAnalyzer(context.applicationContext).analyze(
                     document = document,
@@ -70,10 +76,12 @@ class PdfBookParser(private val context: Context) {
                         onProgress("Analisando figura $current de $total…")
                     },
                 )
+                currentCoroutineContext().ensureActive()
                 val cleanPages = TextPreprocessor.cleanDocumentPages(rawPages)
                 val headingsByPage = layoutLinesByPage.map(TextPreprocessor::detectHeadingCandidates)
                 var pagesWithoutText = 0
                 cleanPages.forEachIndexed { pageIndex, cleanText ->
+                    currentCoroutineContext().ensureActive()
                     val pageChunks = buildPageChunks(
                         pageIndex = pageIndex,
                         cleanText = cleanText,
@@ -139,6 +147,7 @@ class PdfBookParser(private val context: Context) {
         var startPage = 0
         val pageLimit = minOf(initial.pageCount, MAX_BOOTSTRAP_OCR_PAGES)
         while (book.chunks.isEmpty() && startPage < pageLimit) {
+            currentCoroutineContext().ensureActive()
             val result = progressiveOcr.enrich(
                 book = book,
                 startPage = startPage,
@@ -150,6 +159,7 @@ class PdfBookParser(private val context: Context) {
             }
             book = result.book
             startPage += BOOTSTRAP_BATCH_SIZE
+            currentCoroutineContext().ensureActive()
         }
         return book
     }
