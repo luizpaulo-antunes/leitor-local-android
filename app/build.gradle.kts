@@ -95,7 +95,9 @@ if (!localDiiModel.isFile) {
             }
         }
     }
-    android.sourceSets["main"].assets.srcDir(generatedDiiAssets)
+    // This is a static build-directory path. The explicit preBuild dependency below creates its
+    // contents; passing the Provider itself to SourceSet is rejected by recent AGP versions.
+    android.sourceSets["main"].assets.srcDir(generatedDiiAssets.get().asFile)
     tasks.named("preBuild").configure { dependsOn(downloadDiiVoiceModel) }
 }
 
