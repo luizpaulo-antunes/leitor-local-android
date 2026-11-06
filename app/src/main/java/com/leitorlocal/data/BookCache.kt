@@ -6,13 +6,15 @@ import androidx.core.net.toUri
 import com.leitorlocal.model.BookContent
 import com.leitorlocal.model.FigureContent
 import com.leitorlocal.model.SpeechChunk
+import com.leitorlocal.model.SpeechTextRange
+import com.leitorlocal.model.SpeechTextRole
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 
 class BookCache(private val context: Context) {
-    private val directory = File(context.filesDir, "processed_books_v4").apply { mkdirs() }
+    private val directory = File(context.filesDir, "processed_books_v5").apply { mkdirs() }
 
     @Synchronized
     fun load(uri: Uri, title: String): BookContent? = runCatching {
@@ -26,6 +28,24 @@ class BookCache(private val context: Context) {
             for (index in 0 until chunksJson.length()) {
                 val item = chunksJson.getJSONObject(index)
                 val figureJson = item.optJSONObject("figure")
+                val rangesJson = item.optJSONArray("ranges")
+                val ranges = buildList {
+                    if (rangesJson != null) {
+                        for (rangeIndex in 0 until rangesJson.length()) {
+                            val range = rangesJson.getJSONObject(rangeIndex)
+                            val role = runCatching {
+                                SpeechTextRole.valueOf(range.getString("role"))
+                            }.getOrNull() ?: continue
+                            add(
+                                SpeechTextRange(
+                                    start = range.getInt("start"),
+                                    endExclusive = range.getInt("end"),
+                                    role = role,
+                                ),
+                            )
+                        }
+                    }
+                }
                 add(
                     SpeechChunk(
                         pageIndex = item.getInt("page"),
@@ -38,6 +58,7 @@ class BookCache(private val context: Context) {
                                 ocrText = it.optString("ocrText"),
                             )
                         },
+                        ranges = ranges,
                     ),
                 )
             }
@@ -61,6 +82,18 @@ class BookCache(private val context: Context) {
                 val item = JSONObject()
                     .put("page", chunk.pageIndex)
                     .put("text", chunk.text)
+                if (chunk.ranges.isNotEmpty()) {
+                    val ranges = JSONArray()
+                    chunk.ranges.forEach { range ->
+                        ranges.put(
+                            JSONObject()
+                                .put("start", range.start)
+                                .put("end", range.endExclusive)
+                                .put("role", range.role.name),
+                        )
+                    }
+                    item.put("ranges", ranges)
+                }
                 chunk.figure?.let { figure ->
                     item.put(
                         "figure",

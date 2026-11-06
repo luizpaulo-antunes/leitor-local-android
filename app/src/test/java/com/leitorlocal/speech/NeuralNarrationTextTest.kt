@@ -31,4 +31,12 @@ class NeuralNarrationTextTest {
         assertEquals(34, NeuralNarrationText.pauseAfterMilliseconds("continua,", speed = 1f))
         assertEquals(50, NeuralNarrationText.pauseAfterMilliseconds("Fim.", speed = 1.4f))
     }
+
+    @Test
+    fun narratesSeparatedHeadingWithoutDuplicatingPunctuation() {
+        assertEquals(
+            "Um título. Primeiro parágrafo.",
+            NeuralNarrationText.prepare("Um título.\n\nPrimeiro parágrafo."),
+        )
+    }
 }

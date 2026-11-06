@@ -49,4 +49,15 @@ class KaraokeTimingTest {
 
         assertTrue(withPause[1].startProgress > withoutPause[1].startProgress)
     }
+
+    @Test
+    fun keepsParagraphWordOffsetsAfterSeparatedHeading() {
+        val text = "Um título.\n\nPrimeiro parágrafo do capítulo."
+
+        val words = KaraokeTiming.words(text)
+        val paragraphWord = words.first { text.substring(it.start, it.end) == "Primeiro" }
+
+        assertEquals(text.indexOf("Primeiro"), paragraphWord.start)
+        assertEquals("Primeiro", text.substring(paragraphWord.start, paragraphWord.end))
+    }
 }

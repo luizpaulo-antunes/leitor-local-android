@@ -4,7 +4,10 @@ import android.content.Context
 import androidx.core.net.toUri
 import com.leitorlocal.model.BookContent
 import com.leitorlocal.model.SpeechChunk
+import com.leitorlocal.model.SpeechTextRange
+import com.leitorlocal.model.SpeechTextRole
 import com.leitorlocal.text.TextPreprocessor
+import com.leitorlocal.text.TextLineLayout
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -119,9 +122,33 @@ internal object ProgressiveOcrPlanner {
                 pageIndex in 0 until book.pageCount && pageIndex !in existingPages && text.isNotBlank()
             }
             .flatMap { (pageIndex, text) ->
-                TextPreprocessor.splitIntoChunks(text)
+                val headingCandidates = TextPreprocessor.detectHeadingCandidates(
+                    text.lines()
+                        .filter(String::isNotBlank)
+                        .map { line ->
+                            TextLineLayout(
+                                text = line,
+                                fontSizePt = 0f,
+                                isBold = false,
+                                startsParagraph = true,
+                            )
+                        },
+                )
+                TextPreprocessor.splitIntoStructuredChunks(text, headingCandidates)
                     .asSequence()
-                    .map { chunkText -> SpeechChunk(pageIndex = pageIndex, text = chunkText) }
+                    .map { chunk ->
+                        SpeechChunk(
+                            pageIndex = pageIndex,
+                            text = chunk.text,
+                            ranges = chunk.ranges.map { range ->
+                                SpeechTextRange(
+                                    start = range.start,
+                                    endExclusive = range.endExclusive,
+                                    role = SpeechTextRole.HEADING,
+                                )
+                            },
+                        )
+                    }
             }
             .toList()
         if (additions.isEmpty()) return book

@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.10.3.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.10.4.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.10.3.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.10.4.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -46,6 +46,9 @@ estão disponíveis neste repositório.
 - Mantém a página como foco principal e reúne voz e velocidade em ajustes recolhíveis.
 - Mantém a tela ligada enquanto o leitor está visível e narrando, liberando-a ao pausar ou sair.
 - Mostra anterior, pausar/continuar e próximo na notificação, tela bloqueada e painel de mídia.
+- Ao abrir pela notificação, retorna diretamente ao livro ativo sem interromper nem recriar a voz neural.
+- Separa visualmente títulos do início dos parágrafos e preserva o destaque palavra por palavra.
+- Reúne progresso, navegação, reprodução, voz e velocidade em um player inferior compacto.
 - Inclui as vozes neurais brasileiras Miro e Dii, executadas offline pelo Sherpa-ONNX.
 - Aplica um perfil próprio a cada voz: Miro recebe redução de ruído e Dii preserva o áudio original em 22,05 kHz.
 - Reforça o volume neural com limitador contra saturação; o Miro recebe 43% de ganho adicional para equilibrar a Dii.

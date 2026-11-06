@@ -5,8 +5,11 @@ import android.net.Uri
 import com.leitorlocal.model.BookContent
 import com.leitorlocal.model.FigureContent
 import com.leitorlocal.model.SpeechChunk
+import com.leitorlocal.model.SpeechTextRange
+import com.leitorlocal.model.SpeechTextRole
 import com.leitorlocal.data.BookCache
 import com.leitorlocal.text.TextPreprocessor
+import com.leitorlocal.text.TextLineLayout
 import com.leitorlocal.text.FigureDescriptionComposer
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
@@ -38,6 +41,7 @@ class PdfBookParser(private val context: Context) {
                 val totalPages = document.numberOfPages
                 val chunks = mutableListOf<SpeechChunk>()
                 val rawPages = mutableListOf<String>()
+                val layoutLinesByPage = mutableListOf<List<TextLineLayout>>()
                 val stripper = ArtifactIgnoringTextStripper().apply {
                     sortByPosition = true
                 }
@@ -46,6 +50,14 @@ class PdfBookParser(private val context: Context) {
                     stripper.startPage = pageIndex + 1
                     stripper.endPage = pageIndex + 1
                     rawPages += stripper.getText(document)
+                    layoutLinesByPage += stripper.pageLines().map { line ->
+                        TextLineLayout(
+                            text = line.text,
+                            fontSizePt = line.fontSizePt,
+                            isBold = line.isBold,
+                            startsParagraph = line.startsParagraph,
+                        )
+                    }
                     onProgress("Extraindo texto da página ${pageIndex + 1} de $totalPages…")
                 }
 
@@ -59,12 +71,14 @@ class PdfBookParser(private val context: Context) {
                     },
                 )
                 val cleanPages = TextPreprocessor.cleanDocumentPages(rawPages)
+                val headingsByPage = layoutLinesByPage.map(TextPreprocessor::detectHeadingCandidates)
                 var pagesWithoutText = 0
                 cleanPages.forEachIndexed { pageIndex, cleanText ->
                     val pageChunks = buildPageChunks(
                         pageIndex = pageIndex,
                         cleanText = cleanText,
                         figures = figuresByPage[pageIndex].orEmpty(),
+                        headingCandidates = headingsByPage.getOrElse(pageIndex) { emptyList() },
                     )
                     if (pageChunks.isEmpty()) {
                         pagesWithoutText += 1
@@ -144,12 +158,25 @@ class PdfBookParser(private val context: Context) {
         pageIndex: Int,
         cleanText: String,
         figures: List<AnalyzedFigure>,
+        headingCandidates: List<String>,
     ): List<SpeechChunk> = buildList {
         var cursor = 0
 
         fun addText(text: String) {
-            TextPreprocessor.splitIntoChunks(text).forEach { chunkText ->
-                add(SpeechChunk(pageIndex = pageIndex, text = chunkText))
+            TextPreprocessor.splitIntoStructuredChunks(text, headingCandidates).forEach { chunk ->
+                add(
+                    SpeechChunk(
+                        pageIndex = pageIndex,
+                        text = chunk.text,
+                        ranges = chunk.ranges.map { range ->
+                            SpeechTextRange(
+                                start = range.start,
+                                endExclusive = range.endExclusive,
+                                role = SpeechTextRole.HEADING,
+                            )
+                        },
+                    ),
+                )
             }
         }
 

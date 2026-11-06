@@ -1,5 +1,6 @@
 package com.leitorlocal.speech
 
+import com.leitorlocal.model.BookContent
 import com.leitorlocal.model.PlaybackState
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.SpeechChunk
@@ -9,6 +10,8 @@ import kotlinx.coroutines.flow.asStateFlow
 
 object ReadingSession {
     @Volatile private var chunks: List<SpeechChunk> = emptyList()
+    private var pageCount: Int = 0
+    private var pagesWithoutText: Int = 0
     private val mutableState = MutableStateFlow(PlaybackState())
     val state: StateFlow<PlaybackState> = mutableState.asStateFlow()
 
@@ -29,10 +32,14 @@ object ReadingSession {
         startIndex: Int,
         speechRate: Float,
         voiceName: String?,
+        pageCount: Int = inferredPageCount(chunks),
+        pagesWithoutText: Int = 0,
     ) {
         this.bookId = bookId
         this.title = title
         this.chunks = chunks
+        this.pageCount = pageCount.coerceAtLeast(inferredPageCount(chunks))
+        this.pagesWithoutText = pagesWithoutText.coerceIn(0, this.pageCount)
         this.speechRate = speechRate
         this.voiceName = voiceName
         mutableState.value = PlaybackState(
@@ -82,6 +89,33 @@ object ReadingSession {
     }
 
     fun hasContent(): Boolean = chunks.isNotEmpty()
+
+    /**
+     * Returns the book that backs the process-wide playback session. This lets a newly created
+     * activity reattach to an ongoing foreground-service playback without parsing and configuring
+     * the same book again (which would stop the current audio request).
+     */
+    @Synchronized
+    fun bookSnapshot(): BookContent? {
+        if (bookId.isBlank() || chunks.isEmpty()) return null
+        return BookContent(
+            uri = bookId,
+            title = title,
+            pageCount = pageCount.coerceAtLeast(inferredPageCount(chunks)),
+            chunks = chunks.toList(),
+            pagesWithoutText = pagesWithoutText,
+        )
+    }
+
+    /** Updates both text and book metadata as progressive OCR enriches the active session. */
+    @Synchronized
+    fun replaceBook(updated: BookContent) {
+        if (updated.uri != bookId || updated.chunks.isEmpty()) return
+        title = updated.title
+        pageCount = updated.pageCount.coerceAtLeast(inferredPageCount(updated.chunks))
+        pagesWithoutText = updated.pagesWithoutText.coerceIn(0, pageCount)
+        replaceChunks(updated.chunks)
+    }
 
     @Synchronized
     fun setStatus(status: PlaybackStatus, error: String? = null) {
@@ -135,4 +169,7 @@ object ReadingSession {
     }
 
     fun isAtEnd(): Boolean = chunks.isEmpty() || mutableState.value.currentChunkIndex >= chunks.lastIndex
+
+    private fun inferredPageCount(content: List<SpeechChunk>): Int =
+        (content.maxOfOrNull(SpeechChunk::pageIndex) ?: -1) + 1
 }

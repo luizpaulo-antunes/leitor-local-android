@@ -6,7 +6,18 @@ data class SpeechChunk(
     val pageIndex: Int,
     val text: String,
     val figure: FigureContent? = null,
+    val ranges: List<SpeechTextRange> = emptyList(),
 )
+
+data class SpeechTextRange(
+    val start: Int,
+    val endExclusive: Int,
+    val role: SpeechTextRole,
+)
+
+enum class SpeechTextRole {
+    HEADING,
+}
 
 data class FigureContent(
     val imagePath: String?,

@@ -57,6 +57,166 @@ class TextPreprocessorTest {
     }
 
     @Test
+    fun separatesTypographicTitleFromParagraphWithoutAddingAChunk() {
+        val raw = "Um rosto no lugar do balão\nEu tenho uma coleção enorme de mangás comprados."
+        val clean = TextPreprocessor.cleanPage(raw)
+        val headings = TextPreprocessor.detectHeadingCandidates(
+            listOf(
+                TextLineLayout(
+                    text = "Um rosto no lugar do balão",
+                    fontSizePt = 15f,
+                    isBold = true,
+                    startsParagraph = true,
+                ),
+                TextLineLayout(
+                    text = "Eu tenho uma coleção enorme de mangás comprados.",
+                    fontSizePt = 11f,
+                    isBold = false,
+                    startsParagraph = true,
+                ),
+            ),
+        )
+
+        val chunks = TextPreprocessor.splitIntoStructuredChunks(clean, headings)
+
+        assertEquals(1, chunks.size)
+        assertEquals(
+            "Um rosto no lugar do balão.\n\nEu tenho uma coleção enorme de mangás comprados.",
+            chunks.single().text,
+        )
+        assertEquals(1, chunks.single().ranges.size)
+        val range = chunks.single().ranges.single()
+        assertEquals("Um rosto no lugar do balão.", chunks.single().text.substring(range.start, range.endExclusive))
+    }
+
+    @Test
+    fun keepsTwoTypographicallyContinuousTitleLinesInOneRange() {
+        val raw = """
+            Quando a máquina aprende
+            sem entender o problema
+            Este é o início de um parágrafo comum e suficientemente longo.
+        """.trimIndent()
+        val clean = TextPreprocessor.cleanPage(raw)
+        val headings = TextPreprocessor.detectHeadingCandidates(
+            listOf(
+                TextLineLayout(
+                    text = "Quando a máquina aprende",
+                    fontSizePt = 15f,
+                    isBold = true,
+                    startsParagraph = true,
+                ),
+                TextLineLayout(
+                    text = "sem entender o problema",
+                    fontSizePt = 15.2f,
+                    isBold = true,
+                    startsParagraph = false,
+                ),
+                TextLineLayout(
+                    text = "Este é o início de um parágrafo comum e suficientemente longo.",
+                    fontSizePt = 11f,
+                    isBold = false,
+                    startsParagraph = true,
+                ),
+            ),
+        )
+
+        val chunks = TextPreprocessor.splitIntoStructuredChunks(clean, headings)
+
+        assertEquals(listOf("Quando a máquina aprende sem entender o problema"), headings)
+        assertEquals(1, chunks.size)
+        assertEquals(1, chunks.single().ranges.size)
+        val range = chunks.single().ranges.single()
+        assertEquals(
+            "Quando a máquina aprende sem entender o problema.",
+            chunks.single().text.substring(range.start, range.endExclusive),
+        )
+        assertEquals(
+            "Quando a máquina aprende sem entender o problema.\n\n" +
+                "Este é o início de um parágrafo comum e suficientemente longo.",
+            chunks.single().text,
+        )
+    }
+
+    @Test
+    fun matchesHeadingAfterTheSameBulletAndDashNormalizationUsedForSpeech() {
+        val raw = "• Aprender — sem decorar\nEste parágrafo começa depois do título."
+        val clean = TextPreprocessor.cleanPage(raw)
+        val headings = TextPreprocessor.detectHeadingCandidates(
+            listOf(
+                TextLineLayout(
+                    text = "• Aprender — sem decorar",
+                    fontSizePt = 15f,
+                    isBold = true,
+                    startsParagraph = true,
+                ),
+                TextLineLayout(
+                    text = "Este parágrafo começa depois do título.",
+                    fontSizePt = 11f,
+                    isBold = false,
+                    startsParagraph = true,
+                ),
+            ),
+        )
+
+        val chunk = TextPreprocessor.splitIntoStructuredChunks(clean, headings).single()
+
+        assertEquals(1, chunk.ranges.size)
+        val range = chunk.ranges.single()
+        assertEquals(
+            "Aprender, sem decorar.",
+            chunk.text.substring(range.start, range.endExclusive),
+        )
+        assertEquals(
+            "Aprender, sem decorar.\n\nEste parágrafo começa depois do título.",
+            chunk.text,
+        )
+    }
+
+    @Test
+    fun doesNotTreatOrdinaryWrappedLinesAsTitles() {
+        val headings = TextPreprocessor.detectHeadingCandidates(
+            listOf(
+                TextLineLayout(
+                    text = "Esta frase continua",
+                    fontSizePt = 11f,
+                    isBold = false,
+                    startsParagraph = true,
+                ),
+                TextLineLayout(
+                    text = "na linha seguinte do mesmo parágrafo.",
+                    fontSizePt = 11f,
+                    isBold = false,
+                    startsParagraph = false,
+                ),
+            ),
+        )
+
+        assertTrue(headings.isEmpty())
+    }
+
+    @Test
+    fun recognizesExplicitUppercaseHeadingWithoutFontMetadata() {
+        val headings = TextPreprocessor.detectHeadingCandidates(
+            listOf(
+                TextLineLayout(
+                    text = "PARTE DOIS",
+                    fontSizePt = 0f,
+                    isBold = false,
+                    startsParagraph = true,
+                ),
+                TextLineLayout(
+                    text = "Agora começa um novo trecho do livro.",
+                    fontSizePt = 0f,
+                    isBold = false,
+                    startsParagraph = true,
+                ),
+            ),
+        )
+
+        assertEquals(listOf("PARTE DOIS"), headings)
+    }
+
+    @Test
     fun removesLetterSpacedRunningHeadersWithAttachedPageNumbers() {
         val pages = listOf(
             "U M  G E R A D O R  D E  T E X T O  M U I T O  B O M17\nTexto principal.",

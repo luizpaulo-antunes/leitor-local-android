@@ -56,12 +56,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun openBook(uri: Uri, title: String) {
         val saved = preferences.findBook(uri.toString())
+        if (restoreActiveReading(expectedBookId = uri.toString())) return
         loadBook(uri, title, startIndex = saved?.chunkIndex ?: 0)
     }
 
     fun openLibraryBook(book: LibraryBook) {
+        if (restoreActiveReading(expectedBookId = book.uri)) return
         loadBook(book.uri.toUri(), book.title, startIndex = book.chunkIndex)
     }
+
+    /**
+     * Reattaches a newly created activity to playback owned by [ReadingService]. Parsing and
+     * configuring the same book again would flush the neural player, so the UI is rebuilt from
+     * the process-wide session snapshot instead.
+     */
+    fun resumeActiveReading(): Boolean = restoreActiveReading(expectedBookId = null)
 
     fun showLibrary() {
         if (uiState.value.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) pause()
@@ -186,6 +195,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     startIndex = restoredIndex,
                     speechRate = currentState.speechRate,
                     voiceName = currentState.selectedVoiceName,
+                    pageCount = book.pageCount,
+                    pagesWithoutText = book.pagesWithoutText,
                 )
                 preferences.savePosition(restoredIndex)
                 mutableUiState.update {
@@ -254,7 +265,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                     }
                     if (result.book != workingBook) {
                         workingBook = result.book
-                        ReadingSession.replaceChunks(workingBook.chunks)
+                        ReadingSession.replaceBook(workingBook)
                         val currentIndex = ReadingSession.state.value.currentChunkIndex
                         preferences.saveBook(
                             workingBook.uri,
@@ -331,6 +342,48 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         }
                 }
         }
+    }
+
+    private fun restoreActiveReading(expectedBookId: String?): Boolean {
+        val playback = ReadingSession.state.value
+        if (
+            playback.status !in setOf(
+                PlaybackStatus.PLAYING,
+                PlaybackStatus.PREPARING,
+                PlaybackStatus.PAUSED,
+            )
+        ) {
+            return false
+        }
+        val book = ReadingSession.bookSnapshot() ?: return false
+        if (expectedBookId != null && book.uri != expectedBookId) return false
+
+        loadJob?.cancel()
+        ocrJob?.cancel()
+        lastRenderedPage = -1
+        mutableUiState.update { state ->
+            state.copy(
+                isLoading = false,
+                loadingMessage = "",
+                book = book,
+                playback = playback,
+                pageBitmap = state.pageBitmap.takeIf { state.book?.uri == book.uri },
+                selectedVoiceName = ReadingSession.voiceName,
+                speechRate = ReadingSession.speechRate,
+                library = preferences.library(),
+                showingLibrary = false,
+                isOcrRunning = false,
+                ocrMessage = "",
+                error = null,
+            )
+        }
+        val currentPage = book.chunks
+            .getOrNull(playback.currentChunkIndex)
+            ?.pageIndex
+            ?: 0
+        renderPage(book.uri, currentPage)
+        startProgressiveOcr(initialBook = book, priorityPage = currentPage)
+        return true
     }
 
     private fun renderPage(uri: String, pageIndex: Int) {

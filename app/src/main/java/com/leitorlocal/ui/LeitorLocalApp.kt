@@ -36,10 +36,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -113,6 +111,7 @@ import com.leitorlocal.ReaderViewModel
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.LibraryBook
 import com.leitorlocal.model.ReaderUiState
+import com.leitorlocal.model.SpeechTextRole
 import com.leitorlocal.model.VoiceOption
 import java.util.Locale
 import kotlinx.coroutines.delay
@@ -485,7 +484,6 @@ private fun ReaderContent(
 
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val compactHeight = maxHeight < 620.dp
-        val useSettingsDialog = maxHeight < 700.dp
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -496,67 +494,42 @@ private fun ReaderContent(
                 isPlaying = isPlaying,
                 modifier = Modifier.weight(1f).fillMaxWidth(),
             )
-            Spacer(Modifier.height(if (compactHeight) 7.dp else 10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "Página ${state.currentPage + 1} de ${book.pageCount}",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Medium,
-                )
-                Text(
-                    text = "${(readingProgress * 100).roundToInt()}% lido",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            LinearProgressIndicator(
-                progress = { readingProgress.coerceIn(0f, 1f) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 6.dp)
-                    .height(4.dp)
-                    .clip(CircleShape),
-                trackColor = MaterialTheme.colorScheme.surfaceVariant,
-            )
-
-            OcrStatus(
-                isRunning = state.isOcrRunning,
-                message = state.ocrMessage,
-            )
-
-            PlaybackControls(
+            CompactPlaybackBar(
+                currentPage = state.currentPage,
+                pageCount = book.pageCount,
+                readingProgress = readingProgress,
                 isPlaying = isPlaying,
                 compact = compactHeight,
+                isOcrRunning = state.isOcrRunning,
+                ocrMessage = state.ocrMessage,
+                rate = state.speechRate,
+                voices = state.voices,
+                selectedName = state.selectedVoiceName,
                 onPlayPause = onPlayPause,
                 onPrevious = onPrevious,
                 onNext = onNext,
+                onOpenSettings = { settingsExpanded = true },
             )
-
-            ReaderSettings(
-                expanded = settingsExpanded,
-                onExpandedChange = { settingsExpanded = !settingsExpanded },
-                compact = compactHeight,
-                useDialog = useSettingsDialog,
-                rate = state.speechRate,
-                onRateChanged = onRateChanged,
-                voices = state.voices,
-                selectedName = state.selectedVoiceName,
-                onVoiceSelected = onVoiceSelected,
-            )
-            Spacer(Modifier.height(if (compactHeight) 6.dp else 10.dp))
+            Spacer(Modifier.height(if (compactHeight) 4.dp else 6.dp))
         }
+
+        ReaderSettingsDialog(
+            visible = settingsExpanded,
+            onDismiss = { settingsExpanded = false },
+            rate = state.speechRate,
+            onRateChanged = onRateChanged,
+            voices = state.voices,
+            selectedName = state.selectedVoiceName,
+            onVoiceSelected = onVoiceSelected,
+        )
 
         if (showPagesWithoutTextToast) {
             ReaderToast(
                 message = "${book.pagesWithoutText} página(s) sem texto legível foram ignoradas.",
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(horizontal = 24.dp, vertical = 18.dp)
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = if (compactHeight) 106.dp else 114.dp)
                     .zIndex(10f),
             )
         }
@@ -622,11 +595,16 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
     }
     val focusedBitmap = figureBitmap ?: state.pageBitmap.takeIf { chunk.figure != null }
     val panelShape = RoundedCornerShape(20.dp)
+    val isReadingHeading = chunk.ranges.any { range ->
+        range.role == SpeechTextRole.HEADING &&
+            state.playback.currentWordStart in range.start until range.endExclusive
+    }
     val badgeLabel = when {
         state.playback.status == PlaybackStatus.PREPARING && chunk.figure != null ->
             "Preparando descrição da figura…"
         state.playback.status == PlaybackStatus.PREPARING -> "Preparando voz…"
         chunk.figure != null -> "Figura · lendo agora"
+        isReadingHeading -> "Título · lendo agora"
         else -> "Lendo agora"
     }
 
@@ -727,8 +705,26 @@ private fun KaraokeFocusOverlay(state: ReaderUiState) {
                         activeWordEnd > activeWordStart &&
                             activeWordStart >= 0 &&
                             activeWordEnd <= chunk.text.length
+                    val headingFontSize = MaterialTheme.typography.titleLarge.fontSize
                     val highlightedText = buildAnnotatedString {
                         append(chunk.text)
+                        chunk.ranges
+                            .filter { range ->
+                                range.role == SpeechTextRole.HEADING &&
+                                    range.start >= 0 &&
+                                    range.endExclusive in (range.start + 1)..chunk.text.length
+                            }
+                            .forEach { range ->
+                                addStyle(
+                                    SpanStyle(
+                                        color = ActiveWordText,
+                                        fontSize = headingFontSize,
+                                        fontWeight = FontWeight.Bold,
+                                    ),
+                                    range.start,
+                                    range.endExclusive,
+                                )
+                            }
                         if (hasActiveWord) {
                             addStyle(
                                 SpanStyle(color = ActiveWordText),
@@ -915,46 +911,160 @@ private fun ReaderToast(
 }
 
 @Composable
-private fun PlaybackControls(
+private fun CompactPlaybackBar(
+    currentPage: Int,
+    pageCount: Int,
+    readingProgress: Float,
     isPlaying: Boolean,
     compact: Boolean,
+    isOcrRunning: Boolean,
+    ocrMessage: String,
+    rate: Float,
+    voices: List<VoiceOption>,
+    selectedName: String?,
     onPlayPause: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
+    val selected = voices.firstOrNull { it.name == selectedName }
+    val voiceLabel = selected?.label
+        ?.substringBefore("—")
+        ?.substringBefore("·")
+        ?.trim()
+        ?.ifBlank { null }
+        ?: "Voz"
+    val rateLabel = String.format(Locale.forLanguageTag("pt-BR"), "%.1fx", rate)
+
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(top = if (compact) 6.dp else 8.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = if (compact) 5.dp else 7.dp),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
+        tonalElevation = 2.dp,
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = if (compact) 7.dp else 9.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = if (compact) 8.dp else 10.dp,
+                    vertical = if (compact) 7.dp else 8.dp,
+                ),
         ) {
-            PlaybackNavigationButton(
-                isNext = false,
-                description = "Trecho anterior",
-                onClick = onPrevious,
-            )
-            Button(
-                onClick = onPlayPause,
-                modifier = Modifier.heightIn(min = 50.dp).widthIn(min = 132.dp),
-                shape = CircleShape,
-                contentPadding = ButtonDefaults.ContentPadding,
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
-                    text = if (isPlaying) "Pausar" else "Ouvir",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
+                    text = "Pág. ${currentPage + 1} de $pageCount",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "${(readingProgress * 100).roundToInt()}% lido",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
                 )
             }
-            PlaybackNavigationButton(
-                isNext = true,
-                description = "Próximo trecho",
-                onClick = onNext,
+            LinearProgressIndicator(
+                progress = { readingProgress.coerceIn(0f, 1f) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp)
+                    .height(3.dp)
+                    .clip(CircleShape),
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
+
+            OcrStatus(
+                isRunning = isOcrRunning,
+                message = ocrMessage,
+            )
+
+            BoxWithConstraints(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = if (compact) 5.dp else 7.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Row(
+                    modifier = Modifier.width(maxWidth.coerceAtMost(520.dp)),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    PlaybackNavigationButton(
+                        isNext = false,
+                        description = "Trecho anterior",
+                        onClick = onPrevious,
+                    )
+                    Surface(
+                        onClick = onPlayPause,
+                        modifier = Modifier
+                            .weight(1.15f)
+                            .height(48.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = if (isPlaying) "Pausar" else "Ouvir",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                    PlaybackNavigationButton(
+                        isNext = true,
+                        description = "Próximo trecho",
+                        onClick = onNext,
+                    )
+                    Surface(
+                        onClick = onOpenSettings,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(start = 9.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = voiceLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                Text(
+                                    text = rateLabel,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                )
+                            }
+                            Icon(
+                                imageVector = Icons.Default.KeyboardArrowUp,
+                                contentDescription = "Abrir ajustes de voz e velocidade",
+                                modifier = Modifier.size(22.dp),
+                            )
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -987,17 +1097,17 @@ private fun PlaybackNavigationButton(
 }
 
 @Composable
-private fun ReaderSettings(
-    expanded: Boolean,
-    onExpandedChange: () -> Unit,
-    compact: Boolean,
-    useDialog: Boolean,
+private fun ReaderSettingsDialog(
+    visible: Boolean,
+    onDismiss: () -> Unit,
     rate: Float,
     onRateChanged: (Float) -> Unit,
     voices: List<VoiceOption>,
     selectedName: String?,
     onVoiceSelected: (String?) -> Unit,
 ) {
+    if (!visible) return
+
     val selected = voices.firstOrNull { it.name == selectedName }
     val rateLabel = String.format(Locale.forLanguageTag("pt-BR"), "%.1fx", rate)
     val voiceLabel = selected?.label
@@ -1012,100 +1122,50 @@ private fun ReaderSettings(
         else -> " · offline"
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-    ) {
-        Surface(
-            onClick = onExpandedChange,
-            color = Color.Transparent,
-            contentColor = MaterialTheme.colorScheme.onSurface,
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.9f),
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "Ajustes de leitura",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Text(
-                        text = "$voiceLabel · $rateLabel$connectionLabel",
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 2,
-                    )
-                }
-                Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = null,
-                )
-            }
-        }
-        if (expanded && !useDialog) {
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
-            ReaderSettingsControls(
-                rate = rate,
-                rateLabel = rateLabel,
-                onRateChanged = onRateChanged,
-                voices = voices,
-                selectedName = selectedName,
-                onVoiceSelected = onVoiceSelected,
-                modifier = Modifier
-                    .heightIn(max = if (compact) 220.dp else 320.dp)
-                    .verticalScroll(rememberScrollState()),
-            )
-        }
-    }
-
-    if (expanded && useDialog) {
-        Dialog(onDismissRequest = onExpandedChange) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.9f),
-                shape = RoundedCornerShape(22.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            ) {
-                Column(Modifier.fillMaxSize()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 6.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                text = "Ajustes de leitura",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = "$voiceLabel · $rateLabel$connectionLabel",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        TextButton(onClick = onExpandedChange) { Text("Fechar") }
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 18.dp, end = 8.dp, top = 8.dp, bottom = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = "Ajustes de leitura",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "$voiceLabel · $rateLabel$connectionLabel",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
-                    ReaderSettingsControls(
-                        rate = rate,
-                        rateLabel = rateLabel,
-                        onRateChanged = onRateChanged,
-                        voices = voices,
-                        selectedName = selectedName,
-                        onVoiceSelected = onVoiceSelected,
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(rememberScrollState()),
-                    )
+                    TextButton(onClick = onDismiss) { Text("Fechar") }
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f))
+                ReaderSettingsControls(
+                    rate = rate,
+                    rateLabel = rateLabel,
+                    onRateChanged = onRateChanged,
+                    voices = voices,
+                    selectedName = selectedName,
+                    onVoiceSelected = onVoiceSelected,
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState()),
+                )
             }
         }
     }

@@ -1,6 +1,7 @@
 package com.leitorlocal
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.Cursor
 import android.net.Uri
@@ -47,6 +48,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleLaunchIntent(intent)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.uiState.collect {
@@ -71,6 +73,12 @@ class MainActivity : ComponentActivity() {
                 },
             )
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLaunchIntent(intent)
     }
 
     override fun onResume() {
@@ -107,6 +115,16 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
             viewModel.play()
+        }
+    }
+
+    private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action == ACTION_OPEN_ACTIVE_READING) {
+            viewModel.resumeActiveReading()
+            // A ação representa um evento único. Mantê-la no Intent da Activity faria uma
+            // rotação ou recriação posterior reabrir o leitor depois de o usuário voltar à
+            // biblioteca.
+            intent.action = null
         }
     }
 
@@ -149,5 +167,9 @@ class MainActivity : ComponentActivity() {
         } finally {
             cursor?.close()
         }
+    }
+
+    companion object {
+        const val ACTION_OPEN_ACTIVE_READING = "com.leitorlocal.OPEN_ACTIVE_READING"
     }
 }
