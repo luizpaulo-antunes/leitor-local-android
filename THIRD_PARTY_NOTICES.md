@@ -38,8 +38,8 @@ restritivos.
 
 ## Kokoro 82M multilíngue
 
-O aplicativo inclui o Kokoro v1.0 multilíngue quantizado em INT8 e sua tabela oficial de estilos
-de voz, executados localmente pelo Sherpa-ONNX. O pacote é distribuído sob a
+O aplicativo inclui o Kokoro v1.0 multilíngue FP32 e sua tabela oficial de
+estilos de voz, executados localmente pelo Sherpa-ONNX. O pacote é distribuído sob a
 licença Apache 2.0, preservada junto aos assets do modelo.
 
 - Modelo: https://huggingface.co/hexgrad/Kokoro-82M

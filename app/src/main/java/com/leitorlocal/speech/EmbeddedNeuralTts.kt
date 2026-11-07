@@ -147,7 +147,7 @@ class EmbeddedNeuralTts(private val context: Context) {
     private fun EmbeddedNeuralVoice.kokoroConfig(): OfflineTtsKokoroModelConfig =
         if (engine == EmbeddedNeuralEngine.KOKORO) {
             OfflineTtsKokoroModelConfig(
-                model = "$modelDirectory/model.int8.onnx",
+                model = "$modelDirectory/model.onnx",
                 voices = "$modelDirectory/voices.bin",
                 tokens = "$modelDirectory/tokens.txt",
                 dataDir = "",

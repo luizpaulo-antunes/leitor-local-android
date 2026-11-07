@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.12.1.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.12.2.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.12.1.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.12.2.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -85,11 +85,10 @@ instalar outro aplicativo, baixar arquivos adicionais ou alterar as
 configurações do Android. Miro e Dii continuam disponíveis para comparação e
 como alternativas mais leves de processamento.
 
-O Kokoro usa a variante oficial INT8 para carregar mais rápido, recebe fonemas
-pt-BR produzidos localmente e preserva a saída em 24 kHz. A reprodução começa
-assim que o primeiro trecho fica pronto, e os trechos menores reduzem a espera
-inicial. Somente o Miro passa pelo redutor de ruído de 16 kHz, pois os demais
-modelos já geram áudio limpo.
+O Kokoro usa o modelo oficial FP32, recebe fonemas pt-BR produzidos localmente e
+preserva a saída em 24 kHz. A reprodução mantém um trecho adicional pronto para
+evitar interrupções entre parágrafos. Somente o Miro passa pelo redutor de ruído
+de 16 kHz, pois os demais modelos já geram áudio limpo.
 
 Ao abrir um livro com uma voz neural selecionada, o aplicativo começa a preparar em
 segundo plano até três páginas a partir da posição atual. Cada trecho é

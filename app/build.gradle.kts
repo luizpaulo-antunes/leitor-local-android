@@ -12,10 +12,10 @@ val diiModelUrl =
 val diiModelSha256 =
     "0238b83d2c6f4a6690a256303cccd34e35aa28f1ee08cb53af6addb70c0401a7"
 val kokoroModelUrl =
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_0.tar.bz2"
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2"
 val kokoroModelSha256 =
-    "72c347230107ef8a31098ec4d468a605244beef5f1ed00db97efa13518800653"
-val kokoroModelDirectory = "kokoro-int8-multi-lang-v1_0"
+    "60703707bc05ccd48d60e1eb723f38b07d6e474795a0b6a588d7220400e0f7a4"
+val kokoroModelDirectory = "kokoro-multi-lang-v1_0"
 
 fun java.io.File.sha256(): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -36,8 +36,8 @@ android {
         applicationId = "com.leitorlocal"
         minSdk = 26
         targetSdk = 37
-        versionCode = 20
-        versionName = "0.12.1"
+        versionCode = 21
+        versionName = "0.12.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -182,12 +182,12 @@ fun registerSherpaTtsArchive(
 
 registerSherpaTtsArchive(
     taskName = "prepareKokoroVoiceModel",
-    archiveName = "kokoro-int8-multi-lang-v1_0.tar.bz2",
+    archiveName = "kokoro-multi-lang-v1_0.tar.bz2",
     modelUrl = kokoroModelUrl,
     expectedSha256 = kokoroModelSha256,
     modelDirectory = kokoroModelDirectory,
     requiredFiles = listOf(
-        "model.int8.onnx",
+        "model.onnx",
         "voices.bin",
         "tokens.txt",
         "LICENSE",

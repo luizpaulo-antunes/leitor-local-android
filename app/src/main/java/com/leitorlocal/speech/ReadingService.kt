@@ -34,6 +34,13 @@ private sealed interface NeuralQueueItem {
     object End : NeuralQueueItem
 }
 
+internal fun neuralPrebufferChunkCount(voice: EmbeddedNeuralVoice): Int =
+    if (voice.engine == EmbeddedNeuralEngine.KOKORO) {
+        KOKORO_NEURAL_PREBUFFER_CHUNKS
+    } else {
+        DEFAULT_NEURAL_PREBUFFER_CHUNKS
+    }
+
 class ReadingService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var preferences: ReaderPreferences
@@ -496,7 +503,8 @@ class ReadingService : Service() {
     ) {
         val buffered = mutableListOf<NeuralQueueItem.Audio>()
         var pendingTerminal: NeuralQueueItem? = null
-        while (buffered.size < NEURAL_PREBUFFER_CHUNKS && pendingTerminal == null) {
+        val requiredPrebuffer = neuralPrebufferChunkCount(voice)
+        while (buffered.size < requiredPrebuffer && pendingTerminal == null) {
             when (val item = pollNeuralItem(requestId, queue) ?: return) {
                 is NeuralQueueItem.Audio -> buffered += item
                 else -> pendingTerminal = item
@@ -902,9 +910,6 @@ class ReadingService : Service() {
 
     companion object {
         private const val NEURAL_QUEUE_CAPACITY = 8
-        // Begin playback as soon as the current paragraph is ready. Waiting for a second one made
-        // large models appear stalled even though the first playable audio was already available.
-        private const val NEURAL_PREBUFFER_CHUNKS = 1
         private const val NEURAL_PREWARM_PAGES = 3
         private const val NEURAL_PREWARM_MAX_CHUNKS = 18
         private const val NEURAL_QUEUE_WAIT_MS = 200L
@@ -938,3 +943,6 @@ class ReadingService : Service() {
         }
     }
 }
+
+private const val DEFAULT_NEURAL_PREBUFFER_CHUNKS = 1
+private const val KOKORO_NEURAL_PREBUFFER_CHUNKS = 2

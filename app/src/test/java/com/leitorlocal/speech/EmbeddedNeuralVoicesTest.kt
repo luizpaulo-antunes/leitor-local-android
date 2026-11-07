@@ -19,6 +19,11 @@ class EmbeddedNeuralVoicesTest {
             EMBEDDED_NEURAL_VOICES.map { it.engine }.toSet(),
         )
         assertEquals(3, EMBEDDED_NEURAL_VOICES.count { it.engine == EmbeddedNeuralEngine.KOKORO })
+        assertTrue(
+            EMBEDDED_NEURAL_VOICES
+                .filter { it.engine == EmbeddedNeuralEngine.KOKORO }
+                .all { it.modelDirectory == "kokoro-multi-lang-v1_0" },
+        )
         assertEquals(EMBEDDED_NEURAL_VOICES.size, EMBEDDED_NEURAL_VOICES.map { it.name }.toSet().size)
     }
 

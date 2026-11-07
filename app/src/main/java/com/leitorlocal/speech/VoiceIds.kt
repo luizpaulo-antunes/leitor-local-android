@@ -26,7 +26,7 @@ const val EMBEDDED_NEURAL_KOKORO_ALEX_VOICE_NAME = "embedded-neural-pt-br-kokoro
 const val EMBEDDED_NEURAL_KOKORO_SANTA_VOICE_NAME = "embedded-neural-pt-br-kokoro-santa"
 const val EMBEDDED_NEURAL_VOICE_NAME = EMBEDDED_NEURAL_MIRO_VOICE_NAME
 
-private const val KOKORO_MODEL_DIRECTORY = "kokoro-int8-multi-lang-v1_0"
+private const val KOKORO_MODEL_DIRECTORY = "kokoro-multi-lang-v1_0"
 
 private val piperVoices = listOf(
     EmbeddedNeuralVoice(
