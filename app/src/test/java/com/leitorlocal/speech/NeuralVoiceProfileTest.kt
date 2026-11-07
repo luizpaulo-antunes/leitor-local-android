@@ -21,6 +21,17 @@ class NeuralVoiceProfileTest {
     }
 
     @Test
+    fun preservesTheNativeBandwidthOfTheNewModels() {
+        val newVoices = EMBEDDED_NEURAL_VOICES.filter {
+            it.engine == EmbeddedNeuralEngine.SUPERTONIC ||
+                it.engine == EmbeddedNeuralEngine.KOKORO
+        }
+
+        assertTrue(newVoices.isNotEmpty())
+        assertTrue(newVoices.all { !NeuralVoiceProfiles.forVoice(it).useNeuralDenoiser })
+    }
+
+    @Test
     fun boostsMiroBy43PercentWithoutChangingDiiPlaybackGain() {
         val miro = NeuralVoiceProfiles.forVoice(
             requireNotNull(embeddedNeuralVoice(EMBEDDED_NEURAL_MIRO_VOICE_NAME)),

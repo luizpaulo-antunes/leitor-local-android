@@ -36,6 +36,30 @@ Sherpa-ONNX também são preservados nos assets do aplicativo; quando esses avis
 divergem da página oficial atual, este projeto adota os termos atuais mais
 restritivos.
 
+## Supertonic 3
+
+O aplicativo inclui o modelo multilíngue Supertonic 3 quantizado em INT8,
+desenvolvido pela Supertone Inc. O modelo é executado inteiramente no aparelho
+e distribuído sob a licença OpenRAIL-M. O código de exemplo e as ferramentas
+do projeto usam a licença MIT; o arquivo MIT recebido no pacote Sherpa-ONNX é
+preservado junto aos assets, enquanto os termos específicos do modelo estão no
+link oficial abaixo e no aviso incluído pelo aplicativo.
+
+- Projeto: https://github.com/supertone-inc/supertonic
+- Modelo: https://huggingface.co/Supertone/supertonic-3
+- Licença do modelo: https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE
+- Pacote Sherpa-ONNX: https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
+
+## Kokoro 82M multilíngue
+
+O aplicativo inclui o Kokoro v1.0 multilíngue e sua tabela oficial de estilos
+de voz, executados localmente pelo Sherpa-ONNX. O pacote é distribuído sob a
+licença Apache 2.0, preservada junto aos assets do modelo.
+
+- Modelo: https://huggingface.co/hexgrad/Kokoro-82M
+- Pacote Sherpa-ONNX: https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
+- Licença: https://www.apache.org/licenses/LICENSE-2.0
+
 ## GTCRN Speech Enhancement
 
 O aplicativo inclui o modelo `gtcrn_simple.onnx` para redução offline de ruído

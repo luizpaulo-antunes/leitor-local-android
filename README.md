@@ -49,8 +49,8 @@ estão disponíveis neste repositório.
 - Ao abrir pela notificação, retorna diretamente ao livro ativo sem interromper nem recriar a voz neural.
 - Separa visualmente títulos do início dos parágrafos e preserva o destaque palavra por palavra.
 - Reúne progresso, navegação, reprodução, voz e velocidade em um player inferior compacto.
-- Inclui as vozes neurais brasileiras Miro e Dii, executadas offline pelo Sherpa-ONNX.
-- Aplica um perfil próprio a cada voz: Miro recebe redução de ruído e Dii preserva o áudio original em 22,05 kHz.
+- Inclui Miro, Dii, dez estilos Supertonic 3 e três vozes Kokoro, todos executados offline pelo Sherpa-ONNX.
+- Aplica um perfil próprio a cada família: Miro recebe redução de ruído; Dii, Supertonic e Kokoro preservam a resolução original.
 - Reforça o volume neural com limitador contra saturação; o Miro recebe 43% de ganho adicional para equilibrar a Dii.
 - Prepara e guarda localmente as próximas páginas em áudio tratado para iniciar e continuar a leitura com menos espera.
 - Reconhece progressivamente páginas escaneadas com OCR offline e mantém o resultado em cache.
@@ -77,25 +77,31 @@ PDFs bem estruturados, com legendas e texto alternativo, produzem resultados
 melhores. Diagramas complexos sem texto ou descrição acessível ainda recebem
 uma descrição limitada ao conteúdo que o aplicativo consegue detectar.
 
-## Voz neural offline incluída
+## Vozes neurais offline incluídas
 
-Na tela do livro, abra o seletor **Voz** e escolha entre **Miro — narrador
-neural natural · offline** e **Dii — narradora neural expressiva · offline**.
-O motor e os dois modelos já fazem parte do APK; não é necessário instalar
-outro aplicativo, baixar arquivos adicionais ou alterar as configurações do
-Android.
+Na tela do livro, abra o seletor **Voz** e escolha entre Miro, Dii, os dez
+estilos multilíngues do **Supertonic 3** e as vozes **Kokoro Dora, Alex e
+Santa**. Todos os motores e modelos fazem parte do APK; não é necessário
+instalar outro aplicativo, baixar arquivos adicionais ou alterar as
+configurações do Android. Miro e Dii continuam disponíveis para comparação e
+como alternativas mais leves de processamento.
+
+O Supertonic recebe o texto em português diretamente, usa dez passos de geração
+para priorizar qualidade e preserva seu áudio original em 44,1 kHz. O Kokoro recebe fonemas pt-BR produzidos localmente e
+preserva a saída em 24 kHz. Somente o Miro passa pelo redutor de ruído de 16
+kHz, pois os demais modelos já geram áudio limpo.
 
 Ao abrir um livro com uma voz neural selecionada, o aplicativo começa a preparar em
 segundo plano até três páginas a partir da posição atual. Cada trecho é
 sintetizado, recebe o tratamento específico da voz e fica em um cache local. Se
 você tocar em reproduzir antes do fim, a leitura recebe prioridade e o cache
 continua sendo abastecido adiante durante a reprodução. O cache de áudio é
-limitado a 192 MB e o conteúdo do livro não é enviado para a internet.
+limitado a 512 MB e o conteúdo do livro não é enviado para a internet.
 
-O APK com as duas vozes neurais e o OCR offline tem aproximadamente 225 MB e
-suporta aparelhos ARM64 e ARM32. Os modelos Miro e Dii são destinados a uso
-pessoal e não comercial e são redistribuídos sem alterações. Consulte
-`THIRD_PARTY_NOTICES.md`.
+O APK é grande porque inclui todos os modelos, o OCR offline e suporte a
+aparelhos ARM64 e ARM32. Os modelos Miro e Dii são destinados a uso pessoal e
+não comercial e são redistribuídos sem alterações. Consulte
+`THIRD_PARTY_NOTICES.md` para as licenças de todos os motores e modelos.
 
 O processamento também ignora cabeçalhos, rodapés e números marcados pelo PDF
 como artefatos de paginação. Para documentos sem essa marcação, há um filtro de
@@ -130,10 +136,11 @@ a cada alteração enviada à branch principal ou a um pull request. O workflow
 serve para validar o código; o APK instalável e assinado de forma compatível com
 as versões anteriores é publicado somente na página de Releases.
 
-Para manter o histórico Git leve, o arquivo ONNX da voz Dii fica anexado à
-release v0.8.0. Em um clone novo, o primeiro build baixa esse arquivo uma única
-vez e confere seu SHA-256 antes de empacotá-lo. Isso só afeta quem recompila o
-projeto; o APK publicado já contém a voz e não precisa de internet para usá-la.
+Para manter o histórico Git leve, os modelos Dii, Supertonic 3 e Kokoro não
+ficam versionados no repositório. Em um clone novo, o primeiro build baixa os
+pacotes oficiais uma única vez, confere o SHA-256 e inclui somente os arquivos
+necessários no APK. Isso só afeta quem recompila o projeto; o APK publicado já
+contém todas as vozes e não precisa de internet para usá-las.
 
 O aplicativo é compatível com Android 8.0 (API 26) ou superior.
 

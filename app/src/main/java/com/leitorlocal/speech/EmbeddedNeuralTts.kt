@@ -12,7 +12,9 @@ import com.github.csukuangfj.piper.phonemize.piperPhonemizeText
 import com.k2fsa.sherpa.onnx.GenerationConfig
 import com.k2fsa.sherpa.onnx.OfflineTts
 import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsKokoroModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsSupertonicModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
 import com.leitorlocal.model.SpeechChunk
 import java.util.ArrayDeque
@@ -21,7 +23,7 @@ import kotlin.math.roundToInt
 
 class EmbeddedNeuralTts(private val context: Context) {
     private var engine: OfflineTts? = null
-    private var activeVoiceName: String? = null
+    private var activeEngineKey: String? = null
     private val speechEnhancer = NeuralSpeechEnhancer(context)
 
     fun generate(text: String, speed: Float, voice: EmbeddedNeuralVoice): NeuralAudio {
@@ -29,21 +31,12 @@ class EmbeddedNeuralTts(private val context: Context) {
         check(narrationText.isNotEmpty()) { "O trecho não contém texto narrável." }
         val profile = NeuralVoiceProfiles.forVoice(voice)
         val tts = engineFor(voice)
-        val phonemes = piperPhonemizeText(narrationText, tts.lang().ifEmpty { "pt-br" })
-            ?: error("O fonemizador não conseguiu preparar o texto em português.")
-        val codepoints = try {
-            Array(phonemes.numSentences) { index -> phonemes.getPhonemes(index) }
-        } finally {
-            phonemes.close()
-        }
-        val generated = tts.generateWithConfig(
-            text = "",
-            config = GenerationConfig(
-                sid = 0,
-                speed = speed.coerceIn(0.6f, 1.6f),
-                silenceScale = profile.silenceScale,
-                phonemeCodepoints = codepoints,
-            ),
+        val generated = generateRaw(
+            tts = tts,
+            text = narrationText,
+            speed = speed,
+            voice = voice,
+            profile = profile,
         )
         return speechEnhancer.enhance(
             samples = generated.samples,
@@ -58,33 +51,30 @@ class EmbeddedNeuralTts(private val context: Context) {
         speechEnhancer.release()
         engine?.release()
         engine = null
-        activeVoiceName = null
+        activeEngineKey = null
     }
 
     private fun engineFor(voice: EmbeddedNeuralVoice): OfflineTts {
-        if (activeVoiceName == voice.name) engine?.let { return it }
+        if (activeEngineKey == voice.engineKey) engine?.let { return it }
         engine?.release()
         engine = null
-        activeVoiceName = null
+        activeEngineKey = null
         return createEngine(voice).also {
             engine = it
-            activeVoiceName = voice.name
+            activeEngineKey = voice.engineKey
         }
     }
 
     private fun createEngine(voice: EmbeddedNeuralVoice): OfflineTts {
-        piperPhonemizeInitialize(context.applicationContext)
+        if (voice.engine != EmbeddedNeuralEngine.SUPERTONIC) {
+            piperPhonemizeInitialize(context.applicationContext)
+        }
         val profile = NeuralVoiceProfiles.forVoice(voice)
         val config = OfflineTtsConfig(
             model = OfflineTtsModelConfig(
-                vits = OfflineTtsVitsModelConfig(
-                    model = "${voice.modelDirectory}/${voice.modelFile}",
-                    tokens = "${voice.modelDirectory}/tokens.txt",
-                    dataDir = "",
-                    noiseScale = voice.noiseScale,
-                    noiseScaleW = voice.noiseScaleW,
-                    lengthScale = 1.0f,
-                ),
+                vits = voice.vitsConfig(),
+                kokoro = voice.kokoroConfig(),
+                supertonic = voice.supertonicConfig(),
                 numThreads = 2,
                 debug = false,
                 provider = "cpu",
@@ -93,6 +83,167 @@ class EmbeddedNeuralTts(private val context: Context) {
             silenceScale = profile.silenceScale,
         )
         return OfflineTts(assetManager = context.assets, config = config)
+    }
+
+    private fun generateRaw(
+        tts: OfflineTts,
+        text: String,
+        speed: Float,
+        voice: EmbeddedNeuralVoice,
+        profile: NeuralVoiceProfile,
+    ): NeuralAudio = when (voice.engine) {
+        EmbeddedNeuralEngine.SUPERTONIC -> generateSupertonic(
+            tts = tts,
+            text = text,
+            speed = speed,
+            voice = voice,
+            profile = profile,
+        )
+
+        EmbeddedNeuralEngine.PIPER_VITS,
+        EmbeddedNeuralEngine.KOKORO,
+        -> generateFromPortuguesePhonemes(
+            tts = tts,
+            text = text,
+            speed = speed,
+            voice = voice,
+            profile = profile,
+        )
+    }
+
+    private fun generateFromPortuguesePhonemes(
+        tts: OfflineTts,
+        text: String,
+        speed: Float,
+        voice: EmbeddedNeuralVoice,
+        profile: NeuralVoiceProfile,
+    ): NeuralAudio {
+        val language = if (voice.engine == EmbeddedNeuralEngine.KOKORO) {
+            "pt-br"
+        } else {
+            tts.lang().ifEmpty { "pt-br" }
+        }
+        val phonemes = piperPhonemizeText(text, language)
+            ?: error("O fonemizador não conseguiu preparar o texto em português.")
+        val codepoints = try {
+            Array(phonemes.numSentences) { index -> phonemes.getPhonemes(index) }
+        } finally {
+            phonemes.close()
+        }
+        val generated = tts.generateWithConfig(
+            text = "",
+            config = GenerationConfig(
+                sid = voice.speakerId,
+                speed = speed.coerceIn(0.6f, 1.6f),
+                silenceScale = profile.silenceScale,
+                phonemeCodepoints = codepoints,
+            ),
+        )
+        return NeuralAudio(generated.samples, generated.sampleRate)
+    }
+
+    private fun generateSupertonic(
+        tts: OfflineTts,
+        text: String,
+        speed: Float,
+        voice: EmbeddedNeuralVoice,
+        profile: NeuralVoiceProfile,
+    ): NeuralAudio {
+        val pieces = NeuralSynthesisText.split(text, SUPERTONIC_MAX_CHARACTERS)
+        var sampleRate = 0
+        val sampleGroups = pieces.map { piece ->
+            val generated = tts.generateWithConfig(
+                text = piece,
+                config = GenerationConfig(
+                    sid = voice.speakerId,
+                    speed = speed.coerceIn(0.6f, 1.6f),
+                    silenceScale = profile.silenceScale,
+                    numSteps = voice.generationSteps,
+                    extra = mapOf("lang" to "pt"),
+                ),
+            )
+            if (sampleRate == 0) sampleRate = generated.sampleRate
+            check(generated.sampleRate == sampleRate) {
+                "O Supertonic alterou a taxa de áudio durante a síntese."
+            }
+            generated.samples
+        }
+        check(sampleRate > 0 && sampleGroups.any { it.isNotEmpty() }) {
+            "O Supertonic não gerou áudio."
+        }
+        return NeuralAudio(
+            samples = joinWithSilence(sampleGroups, sampleRate, INNER_SENTENCE_PAUSE_MS),
+            sampleRate = sampleRate,
+        )
+    }
+
+    private fun joinWithSilence(
+        groups: List<FloatArray>,
+        sampleRate: Int,
+        silenceMs: Int,
+    ): FloatArray {
+        if (groups.size == 1) return groups.first()
+        val silenceSamples = sampleRate * silenceMs / 1_000
+        val totalSize = groups.sumOf { it.size.toLong() } +
+            silenceSamples.toLong() * (groups.size - 1)
+        check(totalSize <= Int.MAX_VALUE) { "O trecho gerou áudio grande demais." }
+        val output = FloatArray(totalSize.toInt())
+        var offset = 0
+        groups.forEachIndexed { index, samples ->
+            samples.copyInto(output, destinationOffset = offset)
+            offset += samples.size
+            if (index < groups.lastIndex) offset += silenceSamples
+        }
+        return output
+    }
+
+    private fun EmbeddedNeuralVoice.vitsConfig(): OfflineTtsVitsModelConfig =
+        if (engine == EmbeddedNeuralEngine.PIPER_VITS) {
+            OfflineTtsVitsModelConfig(
+                model = "$modelDirectory/$modelFile",
+                tokens = "$modelDirectory/tokens.txt",
+                dataDir = "",
+                noiseScale = noiseScale,
+                noiseScaleW = noiseScaleW,
+                lengthScale = 1.0f,
+            )
+        } else {
+            OfflineTtsVitsModelConfig()
+        }
+
+    private fun EmbeddedNeuralVoice.kokoroConfig(): OfflineTtsKokoroModelConfig =
+        if (engine == EmbeddedNeuralEngine.KOKORO) {
+            OfflineTtsKokoroModelConfig(
+                model = "$modelDirectory/model.onnx",
+                voices = "$modelDirectory/voices.bin",
+                tokens = "$modelDirectory/tokens.txt",
+                dataDir = "",
+                lexicon = "",
+                lang = "",
+                lengthScale = 1.0f,
+            )
+        } else {
+            OfflineTtsKokoroModelConfig()
+        }
+
+    private fun EmbeddedNeuralVoice.supertonicConfig(): OfflineTtsSupertonicModelConfig =
+        if (engine == EmbeddedNeuralEngine.SUPERTONIC) {
+            OfflineTtsSupertonicModelConfig(
+                durationPredictor = "$modelDirectory/duration_predictor.int8.onnx",
+                textEncoder = "$modelDirectory/text_encoder.int8.onnx",
+                vectorEstimator = "$modelDirectory/vector_estimator.int8.onnx",
+                vocoder = "$modelDirectory/vocoder.int8.onnx",
+                ttsJson = "$modelDirectory/tts.json",
+                unicodeIndexer = "$modelDirectory/unicode_indexer.bin",
+                voiceStyle = "$modelDirectory/voice.bin",
+            )
+        } else {
+            OfflineTtsSupertonicModelConfig()
+        }
+
+    companion object {
+        private const val SUPERTONIC_MAX_CHARACTERS = 110
+        private const val INNER_SENTENCE_PAUSE_MS = 150
     }
 }
 

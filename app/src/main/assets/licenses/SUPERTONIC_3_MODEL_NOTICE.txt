@@ -1,0 +1,10 @@
+Supertonic 3 model notice
+
+The Supertonic 3 model weights bundled with this application are Copyright
+(c) 2026 Supertone Inc. and are made available under the OpenRAIL-M license.
+
+Authoritative model license:
+https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE
+
+The MIT LICENSE shipped inside the converted Sherpa-ONNX archive applies to
+the Supertonic sample code and tooling; it does not replace the model license.

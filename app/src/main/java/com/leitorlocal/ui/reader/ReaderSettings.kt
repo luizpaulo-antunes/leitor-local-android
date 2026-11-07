@@ -162,7 +162,7 @@ private fun ReaderSettingsControls(
             onVoiceSelected = onVoiceSelected,
         )
         Text(
-            text = "Miro e Dii são vozes neurais offline. As demais opções exibidas também são do português do Brasil.",
+            text = "Miro, Dii, Supertonic e Kokoro funcionam totalmente offline. As demais opções vêm do Android.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
