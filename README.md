@@ -49,8 +49,8 @@ estão disponíveis neste repositório.
 - Ao abrir pela notificação, retorna diretamente ao livro ativo sem interromper nem recriar a voz neural.
 - Separa visualmente títulos do início dos parágrafos e preserva o destaque palavra por palavra.
 - Reúne progresso, navegação, reprodução, voz e velocidade em um player inferior compacto.
-- Inclui Miro, Dii, dez estilos Supertonic 3 e três vozes Kokoro, todos executados offline pelo Sherpa-ONNX.
-- Aplica um perfil próprio a cada família: Miro recebe redução de ruído; Dii, Supertonic e Kokoro preservam a resolução original.
+- Inclui Miro, Dii e três vozes Kokoro pt-BR, todos executados offline pelo Sherpa-ONNX.
+- Aplica um perfil próprio a cada família: Miro recebe redução de ruído; Dii e Kokoro preservam a resolução original.
 - Reforça o volume neural com limitador contra saturação; o Miro recebe 43% de ganho adicional para equilibrar a Dii.
 - Prepara e guarda localmente as próximas páginas em áudio tratado para iniciar e continuar a leitura com menos espera.
 - Reconhece progressivamente páginas escaneadas com OCR offline e mantém o resultado em cache.
@@ -79,17 +79,17 @@ uma descrição limitada ao conteúdo que o aplicativo consegue detectar.
 
 ## Vozes neurais offline incluídas
 
-Na tela do livro, abra o seletor **Voz** e escolha entre Miro, Dii, os dez
-estilos multilíngues do **Supertonic 3** e as vozes **Kokoro Dora, Alex e
-Santa**. Todos os motores e modelos fazem parte do APK; não é necessário
+Na tela do livro, abra o seletor **Voz** e escolha entre Miro, Dii e as vozes
+**Kokoro Dora, Alex e Santa**. Todos os motores e modelos fazem parte do APK; não é necessário
 instalar outro aplicativo, baixar arquivos adicionais ou alterar as
 configurações do Android. Miro e Dii continuam disponíveis para comparação e
 como alternativas mais leves de processamento.
 
-O Supertonic recebe o texto em português diretamente, usa dez passos de geração
-para priorizar qualidade e preserva seu áudio original em 44,1 kHz. O Kokoro recebe fonemas pt-BR produzidos localmente e
-preserva a saída em 24 kHz. Somente o Miro passa pelo redutor de ruído de 16
-kHz, pois os demais modelos já geram áudio limpo.
+O Kokoro usa a variante oficial INT8 para carregar mais rápido, recebe fonemas
+pt-BR produzidos localmente e preserva a saída em 24 kHz. A reprodução começa
+assim que o primeiro trecho fica pronto, e os trechos menores reduzem a espera
+inicial. Somente o Miro passa pelo redutor de ruído de 16 kHz, pois os demais
+modelos já geram áudio limpo.
 
 Ao abrir um livro com uma voz neural selecionada, o aplicativo começa a preparar em
 segundo plano até três páginas a partir da posição atual. Cada trecho é
@@ -136,7 +136,7 @@ a cada alteração enviada à branch principal ou a um pull request. O workflow
 serve para validar o código; o APK instalável e assinado de forma compatível com
 as versões anteriores é publicado somente na página de Releases.
 
-Para manter o histórico Git leve, os modelos Dii, Supertonic 3 e Kokoro não
+Para manter o histórico Git leve, os modelos Dii e Kokoro não
 ficam versionados no repositório. Em um clone novo, o primeiro build baixa os
 pacotes oficiais uma única vez, confere o SHA-256 e inclui somente os arquivos
 necessários no APK. Isso só afeta quem recompila o projeto; o APK publicado já

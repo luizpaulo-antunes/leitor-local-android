@@ -88,6 +88,7 @@ class ReaderCacheMaintenance(context: Context) {
             "processed_books_v3",
             "processed_books_v4",
             "processed_books_v5",
+            "processed_books_v6",
             "page_text_ocr_v1",
             "book_covers_v1",
             "book_figures_v1",

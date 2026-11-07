@@ -136,7 +136,7 @@ class NeuralAudioCache(context: Context) {
 
     companion object {
         private const val CACHE_DIRECTORY = "neural_audio_cache_v2"
-        private const val PROCESSING_PROFILE = "neural-voice-profiles-v3"
+        private const val PROCESSING_PROFILE = "neural-voice-profiles-v4-kokoro-int8"
         private const val MAGIC = 0x4c4c4132
         private const val FORMAT_VERSION = 2
         private const val MAX_SAMPLE_COUNT = 96_000 * 60 * 10

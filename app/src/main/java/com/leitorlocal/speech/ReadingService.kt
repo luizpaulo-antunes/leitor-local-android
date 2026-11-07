@@ -902,7 +902,9 @@ class ReadingService : Service() {
 
     companion object {
         private const val NEURAL_QUEUE_CAPACITY = 8
-        private const val NEURAL_PREBUFFER_CHUNKS = 2
+        // Begin playback as soon as the current paragraph is ready. Waiting for a second one made
+        // large models appear stalled even though the first playable audio was already available.
+        private const val NEURAL_PREBUFFER_CHUNKS = 1
         private const val NEURAL_PREWARM_PAGES = 3
         private const val NEURAL_PREWARM_MAX_CHUNKS = 18
         private const val NEURAL_QUEUE_WAIT_MS = 200L

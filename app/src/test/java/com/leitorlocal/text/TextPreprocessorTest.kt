@@ -33,6 +33,16 @@ class TextPreprocessorTest {
     }
 
     @Test
+    fun defaultsToShorterChunksSoNeuralPlaybackCanStartSooner() {
+        val text = (1..60).joinToString(" ") { "Conceito técnico número $it." }
+
+        val chunks = TextPreprocessor.splitIntoChunks(text)
+
+        assertTrue(chunks.size > 1)
+        assertTrue(chunks.all { it.length <= 160 })
+    }
+
+    @Test
     fun removesRepeatedHeadersFootersAndPageNumbers() {
         val pages = listOf(
             "Prefácio 5\nPrimeiro parágrafo do livro.\n5",

@@ -162,7 +162,10 @@ object TextPreprocessor {
         return captions
     }
 
-    fun splitIntoChunks(cleanText: String, targetLength: Int = 240): List<String> {
+    fun splitIntoChunks(
+        cleanText: String,
+        targetLength: Int = DEFAULT_SPEECH_CHUNK_LENGTH,
+    ): List<String> {
         if (cleanText.isBlank()) return emptyList()
 
         val chunks = mutableListOf<String>()
@@ -197,7 +200,7 @@ object TextPreprocessor {
     fun splitIntoStructuredChunks(
         cleanText: String,
         headingCandidates: List<String>,
-        targetLength: Int = 240,
+        targetLength: Int = DEFAULT_SPEECH_CHUNK_LENGTH,
     ): List<StructuredTextChunk> {
         val remainingHeadings = headingCandidates.toMutableList()
         return splitIntoChunks(cleanText, targetLength).map { text ->
@@ -412,6 +415,7 @@ object TextPreprocessor {
     }
 
     private const val MARGIN_LINE_COUNT = 3
+    private const val DEFAULT_SPEECH_CHUNK_LENGTH = 160
     private const val MIN_LETTER_SPACED_TOKENS = 6
     private const val MAX_CAPTION_LINES = 4
     private const val MAX_CAPTION_LENGTH = 500

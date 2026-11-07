@@ -11,16 +11,11 @@ val diiModelUrl =
     "https://github.com/luizpaulo-antunes/leitor-local-android/releases/download/v0.8.0/pt_BR-dii-high.onnx"
 val diiModelSha256 =
     "0238b83d2c6f4a6690a256303cccd34e35aa28f1ee08cb53af6addb70c0401a7"
-val supertonicModelUrl =
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2"
-val supertonicModelSha256 =
-    "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427"
-val supertonicModelDirectory = "sherpa-onnx-supertonic-3-tts-int8-2026-05-11"
 val kokoroModelUrl =
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-multi-lang-v1_0.tar.bz2"
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_0.tar.bz2"
 val kokoroModelSha256 =
-    "60703707bc05ccd48d60e1eb723f38b07d6e474795a0b6a588d7220400e0f7a4"
-val kokoroModelDirectory = "kokoro-multi-lang-v1_0"
+    "72c347230107ef8a31098ec4d468a605244beef5f1ed00db97efa13518800653"
+val kokoroModelDirectory = "kokoro-int8-multi-lang-v1_0"
 
 fun java.io.File.sha256(): String {
     val digest = MessageDigest.getInstance("SHA-256")
@@ -167,6 +162,7 @@ fun registerSherpaTtsArchive(
                 }
             }
 
+            generatedAssets.get().asFile.deleteRecursively()
             copy {
                 from(tarTree(resources.bzip2(archive))) {
                     requiredFiles.forEach { include("$modelDirectory/$it") }
@@ -185,32 +181,13 @@ fun registerSherpaTtsArchive(
 }
 
 registerSherpaTtsArchive(
-    taskName = "prepareSupertonicVoiceModel",
-    archiveName = "supertonic-3-int8.tar.bz2",
-    modelUrl = supertonicModelUrl,
-    expectedSha256 = supertonicModelSha256,
-    modelDirectory = supertonicModelDirectory,
-    requiredFiles = listOf(
-        "duration_predictor.int8.onnx",
-        "text_encoder.int8.onnx",
-        "vector_estimator.int8.onnx",
-        "vocoder.int8.onnx",
-        "tts.json",
-        "unicode_indexer.bin",
-        "voice.bin",
-        "LICENSE",
-        "README.md",
-    ),
-)
-
-registerSherpaTtsArchive(
     taskName = "prepareKokoroVoiceModel",
-    archiveName = "kokoro-multi-lang-v1_0.tar.bz2",
+    archiveName = "kokoro-int8-multi-lang-v1_0.tar.bz2",
     modelUrl = kokoroModelUrl,
     expectedSha256 = kokoroModelSha256,
     modelDirectory = kokoroModelDirectory,
     requiredFiles = listOf(
-        "model.onnx",
+        "model.int8.onnx",
         "voices.bin",
         "tokens.txt",
         "LICENSE",

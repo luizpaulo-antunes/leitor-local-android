@@ -139,6 +139,6 @@ class BookCache(private val context: Context) {
     }
 
     companion object {
-        const val CACHE_DIRECTORY = "processed_books_v6"
+        const val CACHE_DIRECTORY = "processed_books_v7"
     }
 }

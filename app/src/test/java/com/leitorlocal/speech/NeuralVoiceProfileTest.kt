@@ -23,8 +23,7 @@ class NeuralVoiceProfileTest {
     @Test
     fun preservesTheNativeBandwidthOfTheNewModels() {
         val newVoices = EMBEDDED_NEURAL_VOICES.filter {
-            it.engine == EmbeddedNeuralEngine.SUPERTONIC ||
-                it.engine == EmbeddedNeuralEngine.KOKORO
+            it.engine == EmbeddedNeuralEngine.KOKORO
         }
 
         assertTrue(newVoices.isNotEmpty())

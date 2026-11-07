@@ -22,7 +22,7 @@ internal object NeuralVoiceProfiles {
         )
 
         else -> NeuralVoiceProfile(
-            // Dii, Kokoro and Supertonic are already clean. Preserve each model's
+            // Dii and Kokoro are already clean. Preserve each model's
             // original bandwidth instead of forcing them through the 16 kHz denoiser.
             silenceScale = 0.20f,
             useNeuralDenoiser = false,

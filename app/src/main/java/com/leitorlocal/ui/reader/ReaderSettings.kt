@@ -162,7 +162,7 @@ private fun ReaderSettingsControls(
             onVoiceSelected = onVoiceSelected,
         )
         Text(
-            text = "Miro, Dii, Supertonic e Kokoro funcionam totalmente offline. As demais opções vêm do Android.",
+            text = "Miro, Dii e Kokoro funcionam totalmente offline. As demais opções vêm do Android.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
