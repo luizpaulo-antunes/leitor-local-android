@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.15.1.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.16.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.15.1.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.16.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -53,6 +53,12 @@ Os valores usam minutos e segundos, o ritmo é explicado como áudio produzido
 por minuto de processamento e a tela informa que a preparação dos próximos
 trechos continua automaticamente durante a reprodução. O painel também se
 adapta a telas estreitas e fontes ampliadas.
+
+Na versão `0.16.0`, a reserva deixou de crescer com a duração total do livro.
+Ela agora é dimensionada para uma sessão de leitura, com limite de
+15 minutos de áudio, e o motor usa até seis núcleos do aparelho. A tela mostra
+quanto áudio ainda falta e o tempo até começar, sem apresentar a duração do
+livro como uma meta de pré-processamento.
 
 ## Estado atual
 
@@ -167,8 +173,9 @@ momento o botão **Ouvir amostra agora** já pode iniciar a reprodução. Em seg
 o aplicativo mede o RTF — tempo gasto na síntese dividido pela duração produzida
 — e calcula uma reserva com margem de segurança. Se o aparelho gera mais rápido
 que a reprodução, a reserva padrão do Kokoro é de dez minutos. Se gera mais
-devagar, o alvo cresce somente até o necessário para que o restante possa ser
-produzido durante a leitura sem esvaziar o buffer.
+devagar, o alvo cobre uma sessão de leitura e nunca passa de quinze minutos de
+áudio. Assim, um livro longo não transforma o início da leitura em uma espera de
+várias horas.
 
 O progresso é apresentado em minutos, com velocidade e ETA, em vez de uma fila
 abstrata de milhares de trechos. Cada áudio novo passa por verificações contra
@@ -189,9 +196,9 @@ PCM16 nas demais vozes. O codificador Opus faz parte do APK, funciona offline
 também no Android 8 e 9 e não depende do codec do fabricante. O cache é limitado
 a 512 MB e o conteúdo do livro não é enviado para a internet.
 
-O APK é grande porque inclui todos os modelos, o OCR offline e suporte a
-aparelhos ARM64 e ARM32. Os modelos Miro e Dii são destinados a uso pessoal e
-não comercial e são redistribuídos sem alterações. Consulte
+O APK é grande porque inclui todos os modelos e o OCR offline. Esta compilação é
+destinada somente a aparelhos ARM64 recentes. Os modelos Miro e Dii são
+destinados a uso pessoal e não comercial e são redistribuídos sem alterações. Consulte
 `THIRD_PARTY_NOTICES.md` para as licenças de todos os motores e modelos.
 
 O processamento também ignora cabeçalhos, rodapés e números marcados pelo PDF

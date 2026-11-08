@@ -32,7 +32,7 @@ class ContinuousPreparationPolicyTest {
     }
 
     @Test
-    fun slowGeneratorCalculatesReserveNeededToFinishWithoutSynthesisPause() {
+    fun slowGeneratorCapsReserveToAReadingSessionInsteadOfTheWholeBook() {
         val target = continuousPreparationTarget(
             preparedDurationMillis = 60_000L,
             estimatedRemainingAudioMillis = 60L * 60_000L,
@@ -40,8 +40,40 @@ class ContinuousPreparationPolicyTest {
             minimumReserveMillis = 10L * 60_000L,
         )
 
-        assertEquals(2_100_000L, target.targetDurationMillis)
-        assertEquals(4_080_000L, target.estimatedWaitMillis)
+        assertEquals(15L * 60_000L, target.targetDurationMillis)
+        assertEquals(28L * 60_000L, target.estimatedWaitMillis)
+    }
+
+    @Test
+    fun slowGeneratorTargetDoesNotGrowWithBookLength() {
+        val oneHour = continuousPreparationTarget(
+            preparedDurationMillis = 60_000L,
+            estimatedRemainingAudioMillis = 60L * 60_000L,
+            realTimeFactor = 2f,
+            minimumReserveMillis = 2L * 60_000L,
+        )
+        val twentyHours = continuousPreparationTarget(
+            preparedDurationMillis = 60_000L,
+            estimatedRemainingAudioMillis = 20L * 60L * 60_000L,
+            realTimeFactor = 2f,
+            minimumReserveMillis = 2L * 60_000L,
+        )
+
+        assertEquals(oneHour.targetDurationMillis, twentyHours.targetDurationMillis)
+        assertEquals(15L * 60_000L, twentyHours.targetDurationMillis)
+    }
+
+    @Test
+    fun reportedLongBookCaseStartsInMinutesInsteadOfHours() {
+        val target = continuousPreparationTarget(
+            preparedDurationMillis = 2L * 60_000L + 53_000L,
+            estimatedRemainingAudioMillis = 12L * 60L * 60_000L,
+            realTimeFactor = 2f,
+            minimumReserveMillis = 10L * 60_000L,
+        )
+
+        assertEquals(15L * 60_000L, target.targetDurationMillis)
+        assertEquals(24L * 60_000L + 14_000L, target.estimatedWaitMillis)
     }
 
     @Test

@@ -159,12 +159,12 @@ class EmbeddedNeuralTts(private val context: Context) {
             OfflineTtsKokoroModelConfig()
         }
 
-    private fun EmbeddedNeuralVoice.threadCount(): Int =
-        if (engine == EmbeddedNeuralEngine.KOKORO) {
-            Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
-        } else {
-            2
-        }
+    private fun EmbeddedNeuralVoice.threadCount(): Int {
+        // This is a personal, arm64-only build aimed at a recent high-performance phone. Leave
+        // enough capacity for AudioTrack and Compose, but do not throttle inference to the two
+        // threads used by the former broad-device configuration.
+        return Runtime.getRuntime().availableProcessors().coerceIn(2, 6)
+    }
 }
 
 class NeuralAudioPlayer {

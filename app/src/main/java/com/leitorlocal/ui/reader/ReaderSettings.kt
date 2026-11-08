@@ -51,7 +51,6 @@ import com.leitorlocal.model.AudioPreparationState
 import com.leitorlocal.speech.formatPreparationDurationPrecise
 import com.leitorlocal.speech.formatGenerationPace
 import java.util.Locale
-import kotlin.math.roundToInt
 
 @Composable
 internal fun ReaderSettingsDialog(
@@ -278,7 +277,9 @@ private fun PreparationNumbers(
     modifier: Modifier = Modifier,
 ) {
     val hasTarget = audioPreparation.targetDurationMillis > 0L
-    val percentage = (audioPreparation.progress * 100f).roundToInt().coerceIn(0, 100)
+    val remainingAudioMillis = (
+        audioPreparation.targetDurationMillis - audioPreparation.preparedDurationMillis
+    ).coerceAtLeast(0L)
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
@@ -300,7 +301,7 @@ private fun PreparationNumbers(
                                 color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
                             )
                             PreparationMetric(
-                                label = "Reserva recomendada",
+                                label = "Reserva para começar",
                                 value = formatPreparationDurationPrecise(
                                     audioPreparation.targetDurationMillis,
                                 ),
@@ -321,7 +322,7 @@ private fun PreparationNumbers(
                         )
                         if (hasTarget) {
                             PreparationMetric(
-                                label = "Reserva recomendada",
+                                label = "Reserva para começar",
                                 value = formatPreparationDurationPrecise(
                                     audioPreparation.targetDurationMillis,
                                 ),
@@ -339,7 +340,11 @@ private fun PreparationNumbers(
                         .padding(top = 16.dp),
                 )
                 Text(
-                    text = "$percentage% da meta de reserva",
+                    text = if (remainingAudioMillis > 0L) {
+                        "Faltam ${formatPreparationDurationPrecise(remainingAudioMillis)} de áudio"
+                    } else {
+                        "Pronto para começar"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
@@ -351,16 +356,10 @@ private fun PreparationNumbers(
                     color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
                 )
                 PreparationMetric(
-                    label = "Tempo estimado para preparar o restante",
+                    label = "Tempo estimado até começar",
                     value = audioPreparation.estimatedWaitMillis?.let(
                         ::formatPreparationDurationPrecise,
                     ) ?: "Calculando…",
-                )
-                Text(
-                    text = "Tempo do relógio. A meta acima é duração de áudio.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
             if (audioPreparation.sampleReady) {
@@ -403,16 +402,16 @@ private fun PreparationMetric(
 private fun preparationExplanation(audioPreparation: AudioPreparationState): String = when {
     audioPreparation.message.startsWith("Não foi possível") -> audioPreparation.message
     audioPreparation.isReady ->
-        "A reserva recomendada está pronta. Você pode começar a leitura contínua."
+        "A reserva para esta sessão está pronta. Você pode começar a leitura contínua."
     audioPreparation.sampleReady && audioPreparation.isRunning ->
-        "A amostra está pronta para ouvir. A reserva continua sendo ampliada para evitar pausas."
+        "Você já pode ouvir. Se preferir, aguarde a reserva curta para reduzir pausas nesta sessão."
     audioPreparation.sampleReady ->
         "A amostra está pronta. Você pode ouvir agora ou ampliar a reserva antes de começar."
     audioPreparation.isRunning ->
         "Primeiro o app prepara 1 min de áudio para medir a velocidade deste aparelho."
     audioPreparation.message.isNotBlank() -> audioPreparation.message
     else ->
-        "Prepare 1 min de áudio para validar a voz e calcular uma reserva contra pausas."
+        "Prepare 1 min de áudio para validar a voz e medir este aparelho."
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

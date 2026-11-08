@@ -29,12 +29,17 @@ internal fun continuousPreparationTarget(
         ?.coerceAtLeast(prepared)
     val measuredFactor = realTimeFactor?.takeIf { it.isFinite() && it > 0f }
     val safeFactor = measuredFactor?.toDouble()?.times(PREPARATION_RTF_SAFETY_FACTOR)
-    val sustainableReserve = if (estimatedTotal != null && safeFactor != null && safeFactor > 1.0) {
-        ceil(estimatedTotal * (1.0 - 1.0 / safeFactor)).toLong()
+    // Preparing enough audio to guarantee uninterrupted playback until the end of a long book
+    // turns a slow local model into an hours-long blocking task. Size the buffer for a useful
+    // listening session instead. Playback keeps producing the following chunks from this head
+    // start, and the hard cap keeps "start reading" independent from book length.
+    val sessionReserve = if (safeFactor != null && safeFactor > 1.0) {
+        ceil(PREPARATION_LISTENING_SESSION_MILLIS * (1.0 - 1.0 / safeFactor)).toLong()
     } else {
         0L
     }
-    val target = maxOf(minimumReserveMillis, sustainableReserve)
+    val target = maxOf(minimumReserveMillis, sessionReserve)
+        .coerceAtMost(PREPARATION_MAX_RESERVE_MILLIS)
         .let { reserve -> estimatedTotal?.let(reserve::coerceAtMost) ?: reserve }
         .coerceAtLeast(sampleDurationMillis)
     val remaining = (target - prepared).coerceAtLeast(0L)
@@ -104,4 +109,6 @@ internal fun formatRealTimeFactor(realTimeFactor: Float): String {
 internal const val PREPARATION_SAMPLE_MILLIS = 60_000L
 private const val KOKORO_CONTINUOUS_RESERVE_MILLIS = 10L * 60_000L
 private const val PIPER_CONTINUOUS_RESERVE_MILLIS = 2L * 60_000L
-private const val PREPARATION_RTF_SAFETY_FACTOR = 1.20
+private const val PREPARATION_LISTENING_SESSION_MILLIS = 30L * 60_000L
+private const val PREPARATION_MAX_RESERVE_MILLIS = 15L * 60_000L
+private const val PREPARATION_RTF_SAFETY_FACTOR = 1.10
