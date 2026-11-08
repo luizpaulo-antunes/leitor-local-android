@@ -1,6 +1,7 @@
 package com.leitorlocal.ui.reader
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -8,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,16 +18,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -36,15 +41,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.leitorlocal.model.VoiceOption
 import com.leitorlocal.model.AudioPreparationState
-import com.leitorlocal.speech.formatPreparationDuration
-import com.leitorlocal.speech.formatRealTimeFactor
+import com.leitorlocal.speech.formatPreparationDurationPrecise
+import com.leitorlocal.speech.formatGenerationPace
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 internal fun ReaderSettingsDialog(
@@ -192,70 +199,220 @@ private fun ReaderSettingsControls(
         )
         Text(
             text = "Leitura contínua",
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            text = audioPreparation.message.ifBlank {
-                "Prepare uma reserva de áudio a partir da posição atual. O processo mede a velocidade antes de calcular quanto precisa ficar pronto."
-            },
+            text = preparationExplanation(audioPreparation),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 5.dp),
+            modifier = Modifier.padding(top = 4.dp),
         )
         if (
             audioPreparation.isRunning ||
             audioPreparation.isReady ||
             audioPreparation.preparedDurationMillis > 0L
         ) {
-            LinearProgressIndicator(
-                progress = { audioPreparation.progress },
+            PreparationNumbers(
+                audioPreparation = audioPreparation,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
+                    .padding(top = 16.dp),
             )
-            if (audioPreparation.targetDurationMillis > 0L) {
+        }
+        if (audioPreparation.sampleReady) {
+            Button(
+                onClick = onPlayPreparedSample,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .padding(top = 16.dp),
+            ) {
+                Text(if (audioPreparation.isReady) "Começar a ouvir" else "Ouvir agora")
+            }
+        }
+        when {
+            audioPreparation.isRunning -> {
+                TextButton(
+                    onClick = onCancelBookPreparation,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text("Pausar preparação")
+                }
+            }
+            !audioPreparation.isReady -> {
+                FilledTonalButton(
+                    onClick = onPrepareBook,
+                    enabled = canPrepareBook,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .padding(top = if (audioPreparation.sampleReady) 4.dp else 16.dp),
+                ) {
+                    Text(
+                        if (audioPreparation.preparedDurationMillis > 0L) {
+                            "Continuar preparação"
+                        } else {
+                            "Preparar 1 min de amostra"
+                        },
+                    )
+                }
+            }
+        }
+        if (audioPreparation.sampleReady) {
+            Text(
+                text = "Enquanto você ouve, o app prepara os próximos trechos automaticamente. Não é preciso criar outra amostra.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun PreparationNumbers(
+    audioPreparation: AudioPreparationState,
+    modifier: Modifier = Modifier,
+) {
+    val hasTarget = audioPreparation.targetDurationMillis > 0L
+    val percentage = (audioPreparation.progress * 100f).roundToInt().coerceIn(0, 100)
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val stackMetrics = maxWidth < 300.dp || LocalDensity.current.fontScale > 1.25f
+                if (stackMetrics) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        PreparationMetric(
+                            label = "Áudio pronto",
+                            value = formatPreparationDurationPrecise(
+                                audioPreparation.preparedDurationMillis,
+                            ),
+                        )
+                        if (hasTarget) {
+                            HorizontalDivider(
+                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
+                            )
+                            PreparationMetric(
+                                label = "Reserva recomendada",
+                                value = formatPreparationDurationPrecise(
+                                    audioPreparation.targetDurationMillis,
+                                ),
+                            )
+                        }
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    ) {
+                        PreparationMetric(
+                            label = "Áudio pronto",
+                            value = formatPreparationDurationPrecise(
+                                audioPreparation.preparedDurationMillis,
+                            ),
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (hasTarget) {
+                            PreparationMetric(
+                                label = "Reserva recomendada",
+                                value = formatPreparationDurationPrecise(
+                                    audioPreparation.targetDurationMillis,
+                                ),
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
+                }
+            }
+            if (hasTarget) {
+                LinearProgressIndicator(
+                    progress = { audioPreparation.progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 16.dp),
+                )
                 Text(
-                    text = "${formatPreparationDuration(audioPreparation.preparedDurationMillis)} de ${formatPreparationDuration(audioPreparation.targetDurationMillis)} de reserva",
+                    text = "$percentage% da meta de reserva",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
                 )
             }
-            audioPreparation.realTimeFactor?.let { realTimeFactor ->
+            if (audioPreparation.isRunning && audioPreparation.sampleReady) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 12.dp),
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
+                )
+                PreparationMetric(
+                    label = "Tempo estimado para preparar o restante",
+                    value = audioPreparation.estimatedWaitMillis?.let(
+                        ::formatPreparationDurationPrecise,
+                    ) ?: "Calculando…",
+                )
                 Text(
-                    text = "Geração: ${formatRealTimeFactor(realTimeFactor)}",
+                    text = "Tempo do relógio. A meta acima é duração de áudio.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 2.dp),
                 )
             }
-        }
-        TextButton(
-            onClick = if (audioPreparation.isRunning) {
-                onCancelBookPreparation
-            } else {
-                onPrepareBook
-            },
-            enabled = audioPreparation.isRunning ||
-                (canPrepareBook && !audioPreparation.isReady),
-            modifier = Modifier.padding(top = 4.dp),
-        ) {
-            Text(
-                when {
-                    audioPreparation.isRunning -> "Cancelar preparação"
-                    audioPreparation.isReady -> "Reserva pronta"
-                    audioPreparation.preparedDurationMillis > 0L -> "Continuar preparação"
-                    else -> "Preparar leitura"
-                },
-            )
-        }
-        if (audioPreparation.isRunning && audioPreparation.sampleReady) {
-            TextButton(onClick = onPlayPreparedSample) {
-                Text("Ouvir amostra agora")
+            if (audioPreparation.sampleReady) {
+                audioPreparation.realTimeFactor?.let { realTimeFactor ->
+                    Text(
+                        text = formatGenerationPace(realTimeFactor),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                }
             }
         }
     }
+}
+
+@Composable
+private fun PreparationMetric(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    Column(modifier) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleLarge.copy(fontFeatureSettings = "tnum"),
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(top = 2.dp),
+        )
+    }
+}
+
+private fun preparationExplanation(audioPreparation: AudioPreparationState): String = when {
+    audioPreparation.message.startsWith("Não foi possível") -> audioPreparation.message
+    audioPreparation.isReady ->
+        "A reserva recomendada está pronta. Você pode começar a leitura contínua."
+    audioPreparation.sampleReady && audioPreparation.isRunning ->
+        "A amostra está pronta para ouvir. A reserva continua sendo ampliada para evitar pausas."
+    audioPreparation.sampleReady ->
+        "A amostra está pronta. Você pode ouvir agora ou ampliar a reserva antes de começar."
+    audioPreparation.isRunning ->
+        "Primeiro o app prepara 1 min de áudio para medir a velocidade deste aparelho."
+    audioPreparation.message.isNotBlank() -> audioPreparation.message
+    else ->
+        "Prepare 1 min de áudio para validar a voz e calcular uma reserva contra pausas."
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

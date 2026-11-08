@@ -36,8 +36,8 @@ android {
         applicationId = "com.leitorlocal"
         minSdk = 26
         targetSdk = 37
-        versionCode = 24
-        versionName = "0.15.0"
+        versionCode = 25
+        versionName = "0.15.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -114,7 +114,7 @@ if (!localDiiModel.isFile) {
     }
     // This is a static build-directory path. The explicit preBuild dependency below creates its
     // contents; passing the Provider itself to SourceSet is rejected by recent AGP versions.
-    android.sourceSets["main"].assets.srcDir(generatedDiiAssets.get().asFile)
+    android.sourceSets["main"].assets.directories.add(generatedDiiAssets.get().asFile.absolutePath)
     tasks.named("preBuild").configure { dependsOn(downloadDiiVoiceModel) }
 }
 
@@ -176,7 +176,7 @@ fun registerSherpaTtsArchive(
             }
         }
     }
-    android.sourceSets["main"].assets.srcDir(generatedAssets.get().asFile)
+    android.sourceSets["main"].assets.directories.add(generatedAssets.get().asFile.absolutePath)
     tasks.named("preBuild").configure { dependsOn(prepareModel) }
 }
 

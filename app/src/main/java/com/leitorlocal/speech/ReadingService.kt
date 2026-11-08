@@ -658,10 +658,7 @@ class ReadingService : Service() {
                         estimatedWaitMillis = target.estimatedWaitMillis,
                         realTimeFactor = realTimeFactor,
                         message = preparationProgressMessage(
-                            preparedDurationMillis = preparedDurationMillis,
                             sampleReady = sampleReady,
-                            realTimeFactor = realTimeFactor,
-                            estimatedWaitMillis = target.estimatedWaitMillis,
                         ),
                     )
                     ReadingSession.setAudioPreparation(state)
@@ -846,26 +843,10 @@ class ReadingService : Service() {
     }
 
     private fun preparationProgressMessage(
-        preparedDurationMillis: Long,
         sampleReady: Boolean,
-        realTimeFactor: Float?,
-        estimatedWaitMillis: Long?,
     ): String {
         if (!sampleReady) return "Criando amostra de 1 minuto para validar a voz…"
-        return buildString {
-            append(formatPreparationDuration(preparedDurationMillis))
-            append(" prontos")
-            realTimeFactor?.let {
-                append(" · ")
-                append(formatRealTimeFactor(it))
-            }
-            estimatedWaitMillis?.takeIf { it > 0L }?.let {
-                append(" · cerca de ")
-                append(formatPreparationDuration(it))
-                append(" restantes")
-            }
-            append(". Você já pode cancelar e ouvir a amostra.")
-        }
+        return "Amostra pronta. Ampliando a reserva para evitar pausas; você já pode ouvir."
     }
 
     private fun consumeNeuralQueue(

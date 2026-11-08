@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.15.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.15.1.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.15.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.15.1.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -46,6 +46,13 @@ de um minuto, mede a velocidade real do modelo e calcula a reserva necessária
 em minutos de áudio. A tela mostra duração pronta, velocidade relativa ao tempo
 real e estimativa de espera. Assim já é possível ouvir e validar a amostra sem
 aguardar milhares de trechos.
+
+Na versão `0.15.1`, a interface dessa preparação passou a separar claramente
+**áudio pronto**, **reserva recomendada** e **tempo estimado para preparar**.
+Os valores usam minutos e segundos, o ritmo é explicado como áudio produzido
+por minuto de processamento e a tela informa que a preparação dos próximos
+trechos continua automaticamente durante a reprodução. O painel também se
+adapta a telas estreitas e fontes ampliadas.
 
 ## Estado atual
 

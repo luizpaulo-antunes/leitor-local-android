@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.graphics.drawable.Icon
 import android.media.AudioAttributes
 import android.media.MediaMetadata
 import android.media.session.MediaSession
@@ -60,10 +61,6 @@ internal class MediaNotificationController(
                     override fun onStop() = callbacks.onStop()
                 },
             )
-            setFlags(
-                MediaSession.FLAG_HANDLES_MEDIA_BUTTONS or
-                    MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS,
-            )
             setSessionActivity(openAppPendingIntent())
             setPlaybackToLocal(audioAttributes)
             isActive = true
@@ -90,9 +87,9 @@ internal class MediaNotificationController(
                 if (state.preparedDurationMillis > 0L) {
                     buildString {
                         append(formatPreparationDuration(state.preparedDurationMillis))
-                        append(" prontos")
+                        append(" de áudio prontos")
                         state.estimatedWaitMillis?.takeIf { it > 0L }?.let {
-                            append(" · ETA ")
+                            append(" · espera estimada ")
                             append(formatPreparationDuration(it))
                         }
                     }
@@ -109,11 +106,11 @@ internal class MediaNotificationController(
             .setShowWhen(false)
             .setProgress(progressMax, progress, state.targetDurationMillis <= 0L)
             .addAction(
-                Notification.Action.Builder(
-                    android.R.drawable.ic_menu_close_clear_cancel,
-                    "Cancelar",
-                    servicePendingIntent(actions.cancelPreparation, 4),
-                ).build(),
+                notificationAction(
+                    iconRes = android.R.drawable.ic_menu_close_clear_cancel,
+                    label = "Cancelar",
+                    intent = servicePendingIntent(actions.cancelPreparation, 4),
+                ),
             )
             .build()
         service.startForeground(NOTIFICATION_ID, notification)
@@ -157,25 +154,25 @@ internal class MediaNotificationController(
             .setPublicVersion(buildRedactedPublicNotification(isPlaying))
             .setShowWhen(false)
             .addAction(
-                Notification.Action.Builder(
-                    android.R.drawable.ic_media_previous,
-                    "Anterior",
-                    servicePendingIntent(actions.previous, 1),
-                ).build(),
+                notificationAction(
+                    iconRes = android.R.drawable.ic_media_previous,
+                    label = "Anterior",
+                    intent = servicePendingIntent(actions.previous, 1),
+                ),
             )
             .addAction(
-                Notification.Action.Builder(
-                    playPauseIcon,
-                    playPauseLabel,
-                    servicePendingIntent(playPauseAction, 2),
-                ).build(),
+                notificationAction(
+                    iconRes = playPauseIcon,
+                    label = playPauseLabel,
+                    intent = servicePendingIntent(playPauseAction, 2),
+                ),
             )
             .addAction(
-                Notification.Action.Builder(
-                    android.R.drawable.ic_media_next,
-                    "Próximo",
-                    servicePendingIntent(actions.next, 3),
-                ).build(),
+                notificationAction(
+                    iconRes = android.R.drawable.ic_media_next,
+                    label = "Próximo",
+                    intent = servicePendingIntent(actions.next, 3),
+                ),
             )
             .setStyle(
                 Notification.MediaStyle()
@@ -227,6 +224,16 @@ internal class MediaNotificationController(
             Intent(service, ReadingService::class.java).setAction(action),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
+
+    private fun notificationAction(
+        iconRes: Int,
+        label: String,
+        intent: PendingIntent,
+    ): Notification.Action = Notification.Action.Builder(
+        Icon.createWithResource(service, iconRes),
+        label,
+        intent,
+    ).build()
 
     private fun updateMediaSession(isPlaying: Boolean) {
         val sessionStatus = ReadingSession.state.value.status

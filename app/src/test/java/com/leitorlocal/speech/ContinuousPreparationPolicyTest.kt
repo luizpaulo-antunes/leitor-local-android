@@ -63,4 +63,23 @@ class ContinuousPreparationPolicyTest {
         assertEquals("12min", formatPreparationDuration(12L * 60_000L))
         assertEquals("2h 5min", formatPreparationDuration(125L * 60_000L))
     }
+
+    @Test
+    fun formatsPreparationNumbersWithoutHidingSeconds() {
+        assertEquals("45 s", formatPreparationDurationPrecise(45_999L))
+        assertEquals("1 min 5 s", formatPreparationDurationPrecise(65_000L))
+        assertEquals("1 h 55 min", formatPreparationDurationPrecise(115L * 60_000L))
+    }
+
+    @Test
+    fun explainsGenerationPaceInAudioProducedPerMinute() {
+        assertEquals(
+            "1 min de processamento gera 30 s de áudio",
+            formatGenerationPace(realTimeFactor = 2f),
+        )
+        assertEquals(
+            "1 min de processamento gera 2 min de áudio",
+            formatGenerationPace(realTimeFactor = 0.5f),
+        )
+    }
 }

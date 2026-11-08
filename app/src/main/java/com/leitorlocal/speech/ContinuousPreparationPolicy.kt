@@ -74,6 +74,27 @@ internal fun formatPreparationDuration(durationMillis: Long): String {
     }
 }
 
+internal fun formatPreparationDurationPrecise(durationMillis: Long): String {
+    val totalSeconds = durationMillis.coerceAtLeast(0L) / 1_000L
+    val hours = totalSeconds / 3_600L
+    val minutes = totalSeconds % 3_600L / 60L
+    val seconds = totalSeconds % 60L
+    return when {
+        hours > 0L && minutes > 0L -> "$hours h $minutes min"
+        hours > 0L -> "$hours h"
+        minutes > 0L && seconds > 0L -> "$minutes min $seconds s"
+        minutes > 0L -> "$minutes min"
+        totalSeconds > 0L -> "$totalSeconds s"
+        else -> "0 s"
+    }
+}
+
+internal fun formatGenerationPace(realTimeFactor: Float): String {
+    if (!realTimeFactor.isFinite() || realTimeFactor <= 0f) return "Medindo velocidade…"
+    val generatedPerMinuteMillis = (60_000f / realTimeFactor).toLong().coerceAtLeast(1_000L)
+    return "1 min de processamento gera ${formatPreparationDurationPrecise(generatedPerMinuteMillis)} de áudio"
+}
+
 internal fun formatRealTimeFactor(realTimeFactor: Float): String {
     if (!realTimeFactor.isFinite() || realTimeFactor <= 0f) return "medindo"
     val relativeSpeed = 1f / realTimeFactor
