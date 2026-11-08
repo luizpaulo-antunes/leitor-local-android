@@ -17,6 +17,7 @@ import com.leitorlocal.pdf.PdfBookParser
 import com.leitorlocal.pdf.PdfPageRenderer
 import com.leitorlocal.speech.ReadingService
 import com.leitorlocal.speech.ReadingSession
+import com.leitorlocal.speech.NeuralAudioCache
 import com.leitorlocal.speech.TtsVoiceCatalog
 import com.leitorlocal.speech.EMBEDDED_NEURAL_VOICES
 import com.leitorlocal.speech.embeddedNeuralVoice
@@ -44,6 +45,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private val preferences = ReaderPreferences(application)
     private val coverStore = BookCoverStore(application)
     private val voiceCatalog = TtsVoiceCatalog(application)
+    private val neuralAudioCache = NeuralAudioCache(application)
     private val savedSettings = preferences.settings()
     private val mutableUiState = MutableStateFlow(
         ReaderUiState(
@@ -59,6 +61,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var ocrJob: Job? = null
     private var intelligenceJob: Job? = null
     private var bookIntelligence: Pair<String, BookIntelligence>? = null
+    private var ocrPausedForAudio = false
     private var lastRenderedPage = -1
     private var lastVoiceRefreshAt = 0L
     private val loadRequests = LoadRequestTracker()
@@ -73,6 +76,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         observePlayback()
+        observeAudioPreparation()
         refreshVoices(force = true)
         viewModelScope.launch {
             cacheMaintenanceJob.await()
@@ -103,6 +107,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         loadJob?.cancel()
         ocrJob?.cancel()
         intelligenceJob?.cancel()
+        ocrPausedForAudio = false
         if (uiState.value.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) pause()
         mutableUiState.update {
             it.copy(
@@ -135,14 +140,21 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     fun changeRate(rate: Float) {
         val bounded = rate.coerceIn(0.6f, 1.6f)
+        if (uiState.value.audioPreparation.isRunning) {
+            ReadingService.cancelBookPreparation(getApplication())
+        }
         mutableUiState.update { it.copy(speechRate = bounded) }
         ReadingSession.updateSettings(bounded, uiState.value.selectedVoiceName)
         preferences.saveSettings(bounded, uiState.value.selectedVoiceName)
         if (canReconfigurePlayback()) ReadingService.reconfigure(getApplication())
+        refreshAudioPreparationState()
     }
 
     fun selectVoice(name: String?) {
         if (name == uiState.value.selectedVoiceName) return
+        if (uiState.value.audioPreparation.isRunning) {
+            ReadingService.cancelBookPreparation(getApplication())
+        }
         mutableUiState.update { it.copy(selectedVoiceName = name) }
         ReadingSession.updateSettings(uiState.value.speechRate, name)
         preferences.saveSettings(uiState.value.speechRate, name)
@@ -153,6 +165,27 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         ) {
             ReadingService.prepareNeural(getApplication())
         }
+        refreshAudioPreparationState()
+    }
+
+    fun prepareBookAudio() {
+        val state = uiState.value
+        if (state.book == null || embeddedNeuralVoice(state.selectedVoiceName) == null) return
+        if (state.isOcrRunning) {
+            mutableUiState.update {
+                it.copy(
+                    audioPreparation = it.audioPreparation.copy(
+                        message = "Aguarde o OCR terminar antes de preparar o áudio completo.",
+                    ),
+                )
+            }
+            return
+        }
+        ReadingService.prepareBook(getApplication())
+    }
+
+    fun cancelBookAudioPreparation() {
+        ReadingService.cancelBookPreparation(getApplication())
     }
 
     fun clearError() {
@@ -327,6 +360,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                         library = preferences.library(),
                     )
                 }
+                refreshAudioPreparationState()
                 renderPage(book.uri, book.chunks[restoredIndex].pageIndex)
                 ReadingService.prepareNeural(getApplication())
                 startProgressiveOcr(
@@ -446,6 +480,12 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             ReadingSession.state.collect { playback ->
                 mutableUiState.update { it.copy(playback = playback) }
+                updateOcrPriority(
+                    audioBusy = playback.status in setOf(
+                        PlaybackStatus.PLAYING,
+                        PlaybackStatus.PREPARING,
+                    ) || ReadingSession.audioPreparation.value.isRunning,
+                )
                 val book = mutableUiState.value.book ?: return@collect
                 val page = book.chunks.getOrNull(playback.currentChunkIndex)?.pageIndex ?: return@collect
                 if (persistedPosition.shouldPersist(book.uri, playback.currentChunkIndex)) {
@@ -454,6 +494,85 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 if (page != lastRenderedPage) renderPage(book.uri, page)
             }
+        }
+    }
+
+    private fun observeAudioPreparation() {
+        viewModelScope.launch {
+            ReadingSession.audioPreparation.collect { preparation ->
+                mutableUiState.update { state ->
+                    if (
+                        preparation.bookId.isNotBlank() &&
+                        state.book?.uri != preparation.bookId
+                    ) {
+                        state
+                    } else {
+                        state.copy(audioPreparation = preparation)
+                    }
+                }
+                updateOcrPriority(
+                    audioBusy = preparation.isRunning ||
+                        ReadingSession.state.value.status in setOf(
+                            PlaybackStatus.PLAYING,
+                            PlaybackStatus.PREPARING,
+                        ),
+                )
+            }
+        }
+    }
+
+    private fun updateOcrPriority(audioBusy: Boolean) {
+        val state = mutableUiState.value
+        val book = state.book ?: return
+        if (audioBusy) {
+            if (ocrJob?.isActive == true) {
+                ocrPausedForAudio = true
+                ocrJob?.cancel()
+                mutableUiState.update {
+                    it.copy(
+                        isOcrRunning = false,
+                        ocrMessage = "OCR pausado para priorizar a voz.",
+                    )
+                }
+            }
+            return
+        }
+        if (ocrPausedForAudio && book.pagesWithoutText > 0 && !state.showingLibrary) {
+            ocrPausedForAudio = false
+            val currentPage = book.chunks
+                .getOrNull(ReadingSession.state.value.currentChunkIndex)
+                ?.pageIndex
+                ?: 0
+            startProgressiveOcr(book, currentPage)
+        }
+    }
+
+    private fun refreshAudioPreparationState() {
+        val book = mutableUiState.value.book ?: return
+        val voice = embeddedNeuralVoice(mutableUiState.value.selectedVoiceName) ?: return
+        val speechRate = mutableUiState.value.speechRate
+        viewModelScope.launch(Dispatchers.IO) {
+            val ready = neuralAudioCache.isBookPrepared(
+                bookId = book.uri,
+                chunkCount = book.chunks.size,
+                speechRate = speechRate,
+                voiceName = voice.name,
+            )
+            if (ReadingSession.bookId != book.uri) return@launch
+            ReadingSession.setAudioPreparation(
+                ReadingSession.audioPreparation.value.copy(
+                    bookId = book.uri,
+                    isRunning = false,
+                    isReady = ready,
+                    completedChunks = if (ready) book.chunks.size else 0,
+                    totalChunks = book.chunks.size,
+                    message = if (ready) {
+                        "Livro pronto para leitura contínua."
+                    } else {
+                        "Prepare todo o áudio antes de ouvir para eliminar pausas de síntese."
+                    },
+                ),
+            )
         }
     }
 
@@ -519,6 +638,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 isOcrRunning = false,
                 ocrMessage = "",
                 error = null,
+                audioPreparation = ReadingSession.audioPreparation.value,
             )
         }
         val currentPage = book.chunks
@@ -527,7 +647,15 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             ?: 0
         persistedPosition.markPersisted(book.uri, playback.currentChunkIndex)
         renderPage(book.uri, currentPage)
-        startProgressiveOcr(initialBook = book, priorityPage = currentPage)
+        val audioBusy = playback.status in setOf(
+            PlaybackStatus.PLAYING,
+            PlaybackStatus.PREPARING,
+        ) || ReadingSession.audioPreparation.value.isRunning
+        if (audioBusy) {
+            ocrPausedForAudio = book.pagesWithoutText > 0
+        } else {
+            startProgressiveOcr(initialBook = book, priorityPage = currentPage)
+        }
         return true
     }
 

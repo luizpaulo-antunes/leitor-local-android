@@ -36,8 +36,8 @@ android {
         applicationId = "com.leitorlocal"
         minSdk = 26
         targetSdk = 37
-        versionCode = 22
-        versionName = "0.13.0"
+        versionCode = 23
+        versionName = "0.14.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -213,6 +213,8 @@ dependencies {
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mlkit:image-labeling:17.0.9")
+    // Pure Java Opus codec. It is packaged in the APK and never contacts a service at runtime.
+    implementation("io.github.jaredmdobson:concentus:1.0.2")
     implementation(files("libs/sherpa-onnx-2.0.1.aar"))
     implementation(files("libs/piper-phonemize-v1.5.9.aar"))
 

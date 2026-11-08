@@ -11,11 +11,14 @@ import android.media.AudioManager
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.Process
+import android.os.PowerManager
 import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.core.content.ContextCompat
 import com.leitorlocal.data.ReaderPreferences
+import com.leitorlocal.model.AudioPreparationState
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.SpeechChunk
 import java.util.Locale
@@ -70,12 +73,22 @@ class ReadingService : Service() {
     private val neuralExecutor = Executors.newSingleThreadExecutor()
     private val neuralPrewarmExecutor = Executors.newSingleThreadExecutor()
     private val neuralPlaybackExecutor = Executors.newSingleThreadExecutor()
+    private val neuralCacheExecutor = Executors.newSingleThreadExecutor { task ->
+        Thread(
+            {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                task.run()
+            },
+            "neural-audio-cache",
+        )
+    }
     private val neuralGenerationLock = Any()
     private val neuralTts by lazy { EmbeddedNeuralTts(applicationContext) }
     private val neuralPlayer = NeuralAudioPlayer()
     @Volatile private var neuralRequestId = 0L
     @Volatile private var neuralQueue: ArrayBlockingQueue<NeuralQueueItem>? = null
     @Volatile private var prewarmRequestId = 0L
+    @Volatile private var bookPreparationRequestId = 0L
     private var ttsKaraokeGeneration = 0L
     private var ttsFallbackRunnable: Runnable? = null
     private val ttsUtterances = TtsUtteranceGate()
@@ -88,6 +101,7 @@ class ReadingService : Service() {
     private var resumeAfterTransientFocusLoss = false
     private var noisyReceiverRegistered = false
     private var hasForegroundNotification = false
+    private var preparationWakeLock: PowerManager.WakeLock? = null
 
     private val playbackAudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -149,6 +163,7 @@ class ReadingService : Service() {
                 pause = ACTION_PAUSE,
                 next = ACTION_NEXT,
                 previous = ACTION_PREVIOUS,
+                cancelPreparation = ACTION_CANCEL_BOOK_PREPARATION,
             ),
             callbacks = MediaSessionCallbacks(
                 onPlay = { play() },
@@ -166,6 +181,8 @@ class ReadingService : Service() {
         when (intent?.action) {
             ACTION_PLAY -> play()
             ACTION_PREPARE_NEURAL -> prepareNeuralAudio()
+            ACTION_PREPARE_BOOK -> prepareCompleteBook()
+            ACTION_CANCEL_BOOK_PREPARATION -> cancelBookPreparation()
             ACTION_PAUSE -> pause()
             ACTION_NEXT -> move(+1)
             ACTION_PREVIOUS -> move(-1)
@@ -215,6 +232,7 @@ class ReadingService : Service() {
         // A queued prewarm is allowed to finish its current native inference, but it must not
         // continue through future pages ahead of the actual playback producer.
         prewarmRequestId += 1
+        cancelBookPreparation(updateNotification = false)
         resumeAfterTransientFocusLoss = false
         ReadingSession.setStatus(PlaybackStatus.PREPARING)
         enterForeground(isPlaying = true)
@@ -469,6 +487,7 @@ class ReadingService : Service() {
                         text = chunk.text,
                         speechRate = speechRate,
                         voice = voice,
+                        persistSynchronously = true,
                     )
                 }
             } finally {
@@ -476,6 +495,156 @@ class ReadingService : Service() {
                     if (warmId == prewarmRequestId && !playWhenReady) stopSelf()
                 }
             }
+        }
+    }
+
+    private fun prepareCompleteBook() {
+        if (!ReadingSession.hasContent()) {
+            stopSelf()
+            return
+        }
+        val voice = embeddedNeuralVoice(ReadingSession.voiceName)
+        if (voice == null) {
+            ReadingSession.setAudioPreparation(
+                AudioPreparationState(
+                    bookId = ReadingSession.bookId,
+                    totalChunks = ReadingSession.chunkCount(),
+                    message = "Escolha Miro, Dii ou Kokoro para preparar o livro.",
+                ),
+            )
+            stopSelf()
+            return
+        }
+        if (playWhenReady) pausePlayback(abandonFocus = true)
+
+        prewarmRequestId += 1
+        val requestId = ++bookPreparationRequestId
+        val bookId = ReadingSession.bookId
+        val speechRate = ReadingSession.speechRate
+        val totalChunks = ReadingSession.chunkCount()
+        ReadingSession.setAudioPreparation(
+            AudioPreparationState(
+                bookId = bookId,
+                isRunning = true,
+                completedChunks = 0,
+                totalChunks = totalChunks,
+                message = "Preparando áudio contínuo…",
+            ),
+        )
+        mediaNotificationController.startPreparation(0, totalChunks)
+        hasForegroundNotification = true
+        acquirePreparationWakeLock()
+
+        neuralPrewarmExecutor.execute {
+            try {
+                for (index in 0 until totalChunks) {
+                    if (
+                        requestId != bookPreparationRequestId ||
+                        bookId != ReadingSession.bookId
+                    ) {
+                        return@execute
+                    }
+                    val chunk = ReadingSession.chunkAt(index) ?: break
+                    getOrCreateNeuralAudio(
+                        bookId = bookId,
+                        chunkIndex = index,
+                        text = chunk.text,
+                        speechRate = speechRate,
+                        voice = voice,
+                        persistSynchronously = true,
+                    )
+                    val completed = index + 1
+                    ReadingSession.setAudioPreparation(
+                        AudioPreparationState(
+                            bookId = bookId,
+                            isRunning = true,
+                            completedChunks = completed,
+                            totalChunks = totalChunks,
+                            message = "Preparando trecho $completed de $totalChunks…",
+                        ),
+                    )
+                    if (completed == totalChunks || completed % PREPARATION_NOTIFICATION_STEP == 0) {
+                        mainHandler.post {
+                            if (requestId == bookPreparationRequestId) {
+                                mediaNotificationController.startPreparation(completed, totalChunks)
+                            }
+                        }
+                    }
+                }
+                if (
+                    requestId == bookPreparationRequestId &&
+                    bookId == ReadingSession.bookId
+                ) {
+                    neuralAudioCache.markBookPrepared(
+                        bookId = bookId,
+                        chunkCount = totalChunks,
+                        speechRate = speechRate,
+                        voiceName = voice.name,
+                    )
+                    ReadingSession.setAudioPreparation(
+                        AudioPreparationState(
+                            bookId = bookId,
+                            isReady = true,
+                            completedChunks = totalChunks,
+                            totalChunks = totalChunks,
+                            message = "Livro pronto para leitura contínua.",
+                        ),
+                    )
+                }
+            } catch (failure: Throwable) {
+                if (requestId == bookPreparationRequestId) {
+                    ReadingSession.setAudioPreparation(
+                        AudioPreparationState(
+                            bookId = bookId,
+                            totalChunks = totalChunks,
+                            message = neuralErrorMessage("preparar o livro", failure),
+                        ),
+                    )
+                }
+            } finally {
+                mainHandler.post {
+                    if (requestId == bookPreparationRequestId && !playWhenReady) {
+                        releasePreparationWakeLock()
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        hasForegroundNotification = false
+                        stopSelf()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun cancelBookPreparation(updateNotification: Boolean = true) {
+        val state = ReadingSession.audioPreparation.value
+        val hadPreparationWakeLock = preparationWakeLock?.isHeld == true
+        bookPreparationRequestId += 1
+        if (!state.isRunning) {
+            if (hadPreparationWakeLock) {
+                releasePreparationWakeLock()
+                if (updateNotification && !playWhenReady) {
+                    if (hasForegroundNotification) {
+                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        hasForegroundNotification = false
+                    }
+                    stopSelf()
+                }
+            }
+            return
+        }
+        ReadingSession.setAudioPreparation(
+            state.copy(
+                isRunning = false,
+                isReady = false,
+                message = "Preparação cancelada. O áudio já criado continuará no cache.",
+            ),
+        )
+        releasePreparationWakeLock()
+        if (updateNotification && !playWhenReady) {
+            if (hasForegroundNotification) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                hasForegroundNotification = false
+            }
+            stopSelf()
         }
     }
 
@@ -499,6 +668,7 @@ class ReadingService : Service() {
         text: String,
         speechRate: Float,
         voice: EmbeddedNeuralVoice,
+        persistSynchronously: Boolean = false,
     ): NeuralAudio {
         neuralAudioCache.load(bookId, chunkIndex, text, speechRate, voice.name)?.let { return it }
         return synchronized(neuralGenerationLock) {
@@ -509,7 +679,21 @@ class ReadingService : Service() {
                 return@synchronized it
             }
             val generated = neuralTts.generate(text, speechRate, voice)
-            neuralAudioCache.save(bookId, chunkIndex, text, speechRate, voice.name, generated)
+            val save = {
+                neuralAudioCache.save(
+                    bookId,
+                    chunkIndex,
+                    text,
+                    speechRate,
+                    voice.name,
+                    generated,
+                )
+            }
+            if (persistSynchronously) {
+                check(save()) { "Não foi possível guardar o áudio preparado." }
+            } else {
+                neuralCacheExecutor.execute { save() }
+            }
             generated
         }
     }
@@ -876,6 +1060,27 @@ class ReadingService : Service() {
         neuralQueue = null
     }
 
+    private fun acquirePreparationWakeLock() {
+        val current = preparationWakeLock
+        if (current?.isHeld == true) return
+        preparationWakeLock = getSystemService(PowerManager::class.java)
+            .newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "$packageName:prepare-book-audio",
+            )
+            .apply {
+                setReferenceCounted(false)
+                acquire(PREPARATION_WAKE_LOCK_TIMEOUT_MILLIS)
+            }
+    }
+
+    private fun releasePreparationWakeLock() {
+        preparationWakeLock?.let { lock ->
+            if (lock.isHeld) runCatching(lock::release)
+        }
+        preparationWakeLock = null
+    }
+
     private fun requestPlaybackAudioFocus(): Int {
         val result = runCatching { audioManager.requestAudioFocus(audioFocusRequest) }
             .getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
@@ -922,9 +1127,11 @@ class ReadingService : Service() {
         playWhenReady = false
         resumeAfterTransientFocusLoss = false
         prewarmRequestId += 1
+        bookPreparationRequestId += 1
         ttsUtterances.invalidate()
         cancelTtsKaraoke()
         cancelNeuralPlayback()
+        releasePreparationWakeLock()
         unregisterBecomingNoisyReceiver()
         abandonPlaybackAudioFocus()
         ttsEngineGeneration += 1
@@ -937,18 +1144,24 @@ class ReadingService : Service() {
         neuralExecutor.shutdown()
         neuralPrewarmExecutor.shutdown()
         neuralPlaybackExecutor.shutdown()
+        neuralCacheExecutor.shutdown()
         mediaNotificationController.release()
         super.onDestroy()
     }
 
     companion object {
-        private const val NEURAL_QUEUE_CAPACITY = 8
+        private const val NEURAL_QUEUE_CAPACITY = 32
         private const val NEURAL_PREWARM_PAGES = 3
         private const val NEURAL_PREWARM_MAX_CHUNKS = 18
         private const val NEURAL_QUEUE_WAIT_MS = 200L
+        private const val PREPARATION_NOTIFICATION_STEP = 4
+        private const val PREPARATION_WAKE_LOCK_TIMEOUT_MILLIS = 6 * 60 * 60 * 1_000L
         private const val KARAOKE_INTERVAL_MILLIS = 70L
         private const val ACTION_PLAY = "com.leitorlocal.PLAY"
         private const val ACTION_PREPARE_NEURAL = "com.leitorlocal.PREPARE_NEURAL"
+        private const val ACTION_PREPARE_BOOK = "com.leitorlocal.PREPARE_BOOK"
+        private const val ACTION_CANCEL_BOOK_PREPARATION =
+            "com.leitorlocal.CANCEL_BOOK_PREPARATION"
         private const val ACTION_PAUSE = "com.leitorlocal.PAUSE"
         private const val ACTION_NEXT = "com.leitorlocal.NEXT"
         private const val ACTION_PREVIOUS = "com.leitorlocal.PREVIOUS"
@@ -962,6 +1175,14 @@ class ReadingService : Service() {
         fun prepareNeural(context: Context) {
             safeSend(context, ACTION_PREPARE_NEURAL)
         }
+
+        fun prepareBook(context: Context) = ContextCompat.startForegroundService(
+            context,
+            Intent(context, ReadingService::class.java).setAction(ACTION_PREPARE_BOOK),
+        )
+
+        fun cancelBookPreparation(context: Context) =
+            safeSend(context, ACTION_CANCEL_BOOK_PREPARATION)
 
         fun pause(context: Context) = safeSend(context, ACTION_PAUSE)
         fun next(context: Context) = safeSend(context, ACTION_NEXT)
@@ -978,5 +1199,5 @@ class ReadingService : Service() {
 }
 
 private const val DEFAULT_NEURAL_PREBUFFER_CHUNKS = 1
-private const val KOKORO_NEURAL_PREBUFFER_CHUNKS = 4
-private const val KOKORO_NEURAL_PREBUFFER_MILLIS = 30_000L
+private const val KOKORO_NEURAL_PREBUFFER_CHUNKS = 8
+private const val KOKORO_NEURAL_PREBUFFER_MILLIS = 90_000L

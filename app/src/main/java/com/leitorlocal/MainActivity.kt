@@ -23,7 +23,7 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val viewModel: ReaderViewModel by viewModels()
-    private var playAfterPermission = false
+    private var actionAfterNotificationPermission = PendingNotificationAction.NONE
     private var isActivityResumed = false
     private var hasWindowFocus = false
     private var isKeepingScreenOn = false
@@ -31,8 +31,12 @@ class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) {
-        if (playAfterPermission) viewModel.play()
-        playAfterPermission = false
+        when (actionAfterNotificationPermission) {
+            PendingNotificationAction.PLAY -> viewModel.play()
+            PendingNotificationAction.PREPARE_BOOK -> viewModel.prepareBookAudio()
+            PendingNotificationAction.NONE -> Unit
+        }
+        actionAfterNotificationPermission = PendingNotificationAction.NONE
     }
 
     private val openPdf = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -71,6 +75,9 @@ class MainActivity : ComponentActivity() {
                         requestNotificationPermissionAndPlay()
                     }
                 },
+                onPrepareBook = {
+                    requestNotificationPermission(PendingNotificationAction.PREPARE_BOOK)
+                },
             )
         }
     }
@@ -106,15 +113,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestNotificationPermissionAndPlay() {
+        requestNotificationPermission(PendingNotificationAction.PLAY)
+    }
+
+    private fun requestNotificationPermission(action: PendingNotificationAction) {
         if (
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
         ) {
-            playAfterPermission = true
+            actionAfterNotificationPermission = action
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         } else {
-            viewModel.play()
+            when (action) {
+                PendingNotificationAction.PLAY -> viewModel.play()
+                PendingNotificationAction.PREPARE_BOOK -> viewModel.prepareBookAudio()
+                PendingNotificationAction.NONE -> Unit
+            }
         }
     }
 
@@ -171,5 +186,11 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_OPEN_ACTIVE_READING = "com.leitorlocal.OPEN_ACTIVE_READING"
+    }
+
+    private enum class PendingNotificationAction {
+        NONE,
+        PLAY,
+        PREPARE_BOOK,
     }
 }

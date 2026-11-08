@@ -49,6 +49,7 @@ fun LeitorLocalApp(
     viewModel: ReaderViewModel,
     onOpenPdf: () -> Unit,
     onPlayPause: () -> Unit,
+    onPrepareBook: () -> Unit,
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
@@ -87,6 +88,8 @@ fun LeitorLocalApp(
                         onNext = viewModel::next,
                         onRateChanged = viewModel::changeRate,
                         onVoiceSelected = viewModel::selectVoice,
+                        onPrepareBook = onPrepareBook,
+                        onCancelBookPreparation = viewModel::cancelBookAudioPreparation,
                     )
                     else -> WelcomeContent(onOpenPdf)
                 }

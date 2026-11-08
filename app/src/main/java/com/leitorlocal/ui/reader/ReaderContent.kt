@@ -41,6 +41,8 @@ internal fun ReaderContent(
     onNext: () -> Unit,
     onRateChanged: (Float) -> Unit,
     onVoiceSelected: (String?) -> Unit,
+    onPrepareBook: () -> Unit,
+    onCancelBookPreparation: () -> Unit,
 ) {
     val book = state.book ?: return
     val readingProgress = if (book.chunks.size <= 1) {
@@ -108,6 +110,20 @@ internal fun ReaderContent(
             voices = state.voices,
             selectedName = state.selectedVoiceName,
             onVoiceSelected = onVoiceSelected,
+            audioPreparation = if (
+                state.isOcrRunning && !state.audioPreparation.isRunning
+            ) {
+                state.audioPreparation.copy(
+                    message = "O OCR está preparando as páginas escaneadas. O botão será liberado quando ele terminar.",
+                )
+            } else {
+                state.audioPreparation
+            },
+            canPrepareBook = state.voices
+                .firstOrNull { it.name == state.selectedVoiceName }
+                ?.isEmbeddedNeural == true && !state.isOcrRunning && !isPlaying,
+            onPrepareBook = onPrepareBook,
+            onCancelBookPreparation = onCancelBookPreparation,
         )
 
         if (showPagesWithoutTextToast) {

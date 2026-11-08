@@ -9,11 +9,11 @@ class NeuralPlaybackPolicyTest {
         val kokoro = requireNotNull(embeddedNeuralVoice(EMBEDDED_NEURAL_KOKORO_DORA_VOICE_NAME))
         val policy = neuralPrebufferPolicy(kokoro)
 
-        assertEquals(4, policy.minimumChunks)
-        assertEquals(30_000L, policy.minimumDurationMillis)
-        assertEquals(false, hasRequiredNeuralPrebuffer(policy, 3, 45_000L))
-        assertEquals(false, hasRequiredNeuralPrebuffer(policy, 4, 29_999L))
-        assertEquals(true, hasRequiredNeuralPrebuffer(policy, 4, 30_000L))
+        assertEquals(8, policy.minimumChunks)
+        assertEquals(90_000L, policy.minimumDurationMillis)
+        assertEquals(false, hasRequiredNeuralPrebuffer(policy, 7, 120_000L))
+        assertEquals(false, hasRequiredNeuralPrebuffer(policy, 8, 89_999L))
+        assertEquals(true, hasRequiredNeuralPrebuffer(policy, 8, 90_000L))
     }
 
     @Test

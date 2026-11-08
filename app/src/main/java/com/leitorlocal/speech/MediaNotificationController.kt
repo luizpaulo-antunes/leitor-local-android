@@ -19,6 +19,7 @@ internal data class MediaNotificationActions(
     val pause: String,
     val next: String,
     val previous: String,
+    val cancelPreparation: String,
 )
 
 internal data class MediaSessionCallbacks(
@@ -76,6 +77,37 @@ internal class MediaNotificationController(
             service.getSystemService(NotificationManager::class.java)
                 .notify(NOTIFICATION_ID, notification)
         }
+    }
+
+    fun startPreparation(completedChunks: Int, totalChunks: Int) {
+        val progress = completedChunks.coerceIn(0, totalChunks.coerceAtLeast(0))
+        val notification = Notification.Builder(service, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle("Preparando leitura contínua")
+            .setContentText(
+                if (totalChunks > 0) {
+                    "Trecho $progress de $totalChunks"
+                } else {
+                    "Preparando o áudio do livro"
+                },
+            )
+            .setContentIntent(openAppPendingIntent())
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_PROGRESS)
+            .setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(buildPreparationPublicNotification())
+            .setShowWhen(false)
+            .setProgress(totalChunks.coerceAtLeast(0), progress, totalChunks <= 0)
+            .addAction(
+                Notification.Action.Builder(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    "Cancelar",
+                    servicePendingIntent(actions.cancelPreparation, 4),
+                ).build(),
+            )
+            .build()
+        service.startForeground(NOTIFICATION_ID, notification)
     }
 
     fun release() {
@@ -152,6 +184,18 @@ internal class MediaNotificationController(
             .setContentIntent(openAppPendingIntent())
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_TRANSPORT)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setShowWhen(false)
+            .build()
+
+    private fun buildPreparationPublicNotification(): Notification =
+        Notification.Builder(service, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher)
+            .setContentTitle(service.getString(R.string.app_name))
+            .setContentText("Preparando áudio offline")
+            .setContentIntent(openAppPendingIntent())
+            .setOnlyAlertOnce(true)
+            .setCategory(Notification.CATEGORY_PROGRESS)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setShowWhen(false)
             .build()

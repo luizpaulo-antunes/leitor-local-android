@@ -12,11 +12,12 @@ import java.security.MessageDigest
 import kotlin.math.roundToInt
 
 class NeuralAudioCache(context: Context) {
-    private val root = File(context.noBackupFilesDir, CACHE_DIRECTORY)
-    private var bytesWrittenSinceLastTrim = 0L
-    private var initialTrimCompleted = false
+    private val noBackupFilesDir = context.noBackupFilesDir
+    private val root = File(noBackupFilesDir, CACHE_DIRECTORY)
+    private val maintenanceLock = Any()
+    @Volatile private var bytesWrittenSinceLastTrim = 0L
+    @Volatile private var initialMaintenanceCompleted = false
 
-    @Synchronized
     fun load(
         bookId: String,
         chunkIndex: Int,
@@ -24,23 +25,23 @@ class NeuralAudioCache(context: Context) {
         speechRate: Float,
         voiceName: String,
     ): NeuralAudio? {
-        ensureInitialTrim()
+        ensureInitialMaintenance(bookId)
         val file = cacheFile(bookId, chunkIndex, text, speechRate, voiceName)
         if (!file.isFile) return null
 
         return runCatching {
-            DataInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
-                check(input.readInt() == MAGIC) { "Cache de audio invalido." }
-                check(input.readInt() == FORMAT_VERSION) { "Versao de cache incompativel." }
-                val sampleRate = input.readInt()
-                val sampleCount = input.readInt()
-                check(sampleRate in 8_000..96_000) { "Taxa de audio invalida." }
-                check(sampleCount in 1..MAX_SAMPLE_COUNT) { "Tamanho de audio invalido." }
-                val samples = FloatArray(sampleCount) {
-                    input.readShort().toFloat() / 32_768f
+            DataInputStream(BufferedInputStream(FileInputStream(file), IO_BUFFER_BYTES)).use { input ->
+                check(input.readInt() == MAGIC) { "Cache de áudio inválido." }
+                check(input.readInt() == FORMAT_VERSION) { "Versão de cache incompatível." }
+                when (input.readInt()) {
+                    CODEC_OPUS -> OpusAudioCodec.read(input)
+                    CODEC_PCM16 -> readPcm16(input)
+                    else -> error("Codec de cache desconhecido.")
                 }
-                file.setLastModified(System.currentTimeMillis())
-                NeuralAudio(samples, sampleRate)
+            }.also {
+                val now = System.currentTimeMillis()
+                file.setLastModified(now)
+                file.parentFile?.setLastModified(now)
             }
         }.getOrElse {
             file.delete()
@@ -48,7 +49,6 @@ class NeuralAudioCache(context: Context) {
         }
     }
 
-    @Synchronized
     fun save(
         bookId: String,
         chunkIndex: Int,
@@ -56,42 +56,131 @@ class NeuralAudioCache(context: Context) {
         speechRate: Float,
         voiceName: String,
         audio: NeuralAudio,
-    ) {
-        ensureInitialTrim()
-        if (audio.samples.isEmpty() || audio.sampleRate <= 0) return
+    ): Boolean {
+        ensureInitialMaintenance(bookId)
+        if (audio.samples.isEmpty() || audio.sampleRate <= 0) return false
         val destination = cacheFile(bookId, chunkIndex, text, speechRate, voiceName)
-        if (destination.isFile) return
+        if (destination.isFile) return true
         destination.parentFile?.mkdirs()
 
         val temporary = File(destination.parentFile, ".${destination.name}.${System.nanoTime()}.tmp")
-        runCatching {
-            DataOutputStream(BufferedOutputStream(FileOutputStream(temporary))).use { output ->
+        return runCatching {
+            DataOutputStream(
+                BufferedOutputStream(FileOutputStream(temporary), IO_BUFFER_BYTES),
+            ).use { output ->
                 output.writeInt(MAGIC)
                 output.writeInt(FORMAT_VERSION)
-                output.writeInt(audio.sampleRate)
-                output.writeInt(audio.samples.size)
-                audio.samples.forEach { sample ->
-                    val pcm16 = (sample.coerceIn(-1f, 1f) * 32_767f).roundToInt()
-                    output.writeShort(pcm16)
+                if (OpusAudioCodec.supports(audio.sampleRate)) {
+                    output.writeInt(CODEC_OPUS)
+                    OpusAudioCodec.write(audio, output)
+                } else {
+                    output.writeInt(CODEC_PCM16)
+                    writePcm16(audio, output)
                 }
             }
             if (!temporary.renameTo(destination)) {
                 temporary.copyTo(destination, overwrite = true)
                 temporary.delete()
             }
-            destination.parentFile
-                ?.listFiles { file ->
-                    file.isFile && file.name.startsWith("${chunkIndex}_") && file != destination
-                }
-                ?.forEach(File::delete)
-            bytesWrittenSinceLastTrim += destination.length()
-            if (bytesWrittenSinceLastTrim >= TRIM_INTERVAL_BYTES) {
-                trimToSize()
-                bytesWrittenSinceLastTrim = 0L
+            destination.parentFile?.setLastModified(System.currentTimeMillis())
+            val written = destination.length()
+            val accumulated = synchronized(maintenanceLock) {
+                bytesWrittenSinceLastTrim += written
+                bytesWrittenSinceLastTrim
             }
-        }.onFailure {
+            if (accumulated >= TRIM_INTERVAL_BYTES) {
+                synchronized(maintenanceLock) {
+                    if (bytesWrittenSinceLastTrim >= TRIM_INTERVAL_BYTES) {
+                        trimToSize(protectedBookId = bookId)
+                        bytesWrittenSinceLastTrim = 0L
+                    }
+                }
+            }
+            true
+        }.getOrElse {
             temporary.delete()
+            false
         }
+    }
+
+    fun markBookPrepared(
+        bookId: String,
+        chunkCount: Int,
+        speechRate: Float,
+        voiceName: String,
+    ) {
+        if (chunkCount <= 0) return
+        val marker = preparedMarker(bookId, speechRate, voiceName)
+        marker.parentFile?.mkdirs()
+        val temporary = File(marker.parentFile, ".${marker.name}.${System.nanoTime()}.tmp")
+        runCatching {
+            DataOutputStream(BufferedOutputStream(FileOutputStream(temporary))).use { output ->
+                output.writeInt(PREPARED_MARKER_VERSION)
+                output.writeInt(chunkCount)
+            }
+            if (!temporary.renameTo(marker)) {
+                temporary.copyTo(marker, overwrite = true)
+                temporary.delete()
+            }
+            marker.parentFile?.setLastModified(System.currentTimeMillis())
+        }.onFailure { temporary.delete() }
+    }
+
+    fun isBookPrepared(
+        bookId: String,
+        chunkCount: Int,
+        speechRate: Float,
+        voiceName: String,
+    ): Boolean {
+        if (chunkCount <= 0) return false
+        val marker = preparedMarker(bookId, speechRate, voiceName)
+        if (!marker.isFile) return false
+        return runCatching {
+            DataInputStream(BufferedInputStream(FileInputStream(marker))).use { input ->
+                input.readInt() == PREPARED_MARKER_VERSION && input.readInt() == chunkCount
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun writePcm16(audio: NeuralAudio, output: DataOutputStream) {
+        output.writeInt(audio.sampleRate)
+        output.writeInt(audio.samples.size)
+        val bytes = ByteArray(PCM_BLOCK_SAMPLES * 2)
+        var sampleOffset = 0
+        while (sampleOffset < audio.samples.size) {
+            val count = minOf(PCM_BLOCK_SAMPLES, audio.samples.size - sampleOffset)
+            repeat(count) { localIndex ->
+                val pcm = (audio.samples[sampleOffset + localIndex].coerceIn(-1f, 1f) * 32_767f)
+                    .roundToInt()
+                val byteIndex = localIndex * 2
+                bytes[byteIndex] = (pcm shr 8).toByte()
+                bytes[byteIndex + 1] = pcm.toByte()
+            }
+            output.write(bytes, 0, count * 2)
+            sampleOffset += count
+        }
+    }
+
+    private fun readPcm16(input: DataInputStream): NeuralAudio {
+        val sampleRate = input.readInt()
+        val sampleCount = input.readInt()
+        check(sampleRate in 8_000..96_000) { "Taxa de áudio inválida." }
+        check(sampleCount in 1..MAX_SAMPLE_COUNT) { "Tamanho de áudio inválido." }
+        val samples = FloatArray(sampleCount)
+        val bytes = ByteArray(PCM_BLOCK_SAMPLES * 2)
+        var sampleOffset = 0
+        while (sampleOffset < sampleCount) {
+            val count = minOf(PCM_BLOCK_SAMPLES, sampleCount - sampleOffset)
+            input.readFully(bytes, 0, count * 2)
+            repeat(count) { localIndex ->
+                val byteIndex = localIndex * 2
+                val pcm = ((bytes[byteIndex].toInt() shl 8) or
+                    (bytes[byteIndex + 1].toInt() and 0xff)).toShort()
+                samples[sampleOffset + localIndex] = pcm.toFloat() / 32_768f
+            }
+            sampleOffset += count
+        }
+        return NeuralAudio(samples, sampleRate)
     }
 
     private fun cacheFile(
@@ -101,33 +190,58 @@ class NeuralAudioCache(context: Context) {
         speechRate: Float,
         voiceName: String,
     ): File {
-        val bookDirectory = File(root, sha256(bookId).take(20))
+        val contentKey = sha256("${profileKey(speechRate, voiceName)}\n$text").take(20)
+        return File(bookDirectory(bookId), "${chunkIndex}_$contentKey.lac")
+    }
+
+    private fun preparedMarker(bookId: String, speechRate: Float, voiceName: String): File =
+        File(bookDirectory(bookId), ".prepared_${profileKey(speechRate, voiceName).take(20)}")
+
+    private fun profileKey(speechRate: Float, voiceName: String): String {
         val rateKey = (speechRate.coerceIn(0.6f, 1.6f) * 1_000).roundToInt()
-        val voiceKey = if (voiceName == EMBEDDED_NEURAL_MIRO_VOICE_NAME) "" else "$voiceName\n"
-        val contentKey = sha256("$PROCESSING_PROFILE\n$rateKey\n$voiceKey$text").take(20)
-        return File(bookDirectory, "${chunkIndex}_$contentKey.pcm")
+        return sha256("$PROCESSING_PROFILE\n$rateKey\n$voiceName")
     }
 
-    private fun trimToSize() {
-        val files = root.walkTopDown()
-            .filter { it.isFile && !it.name.endsWith(".tmp") }
-            .sortedBy(File::lastModified)
-            .toList()
-        var totalBytes = files.sumOf(File::length)
-        files.forEach { file ->
+    private fun bookDirectory(bookId: String): File = File(root, sha256(bookId).take(20))
+
+    private fun trimToSize(protectedBookId: String?) {
+        if (!root.isDirectory) return
+        val protectedDirectory = protectedBookId?.let(::bookDirectory)
+        data class CachedBook(val directory: File, val bytes: Long, val lastUsedAt: Long)
+        val books = root.listFiles()
+            .orEmpty()
+            .filter(File::isDirectory)
+            .map { directory ->
+                val files = directory.walkTopDown()
+                    .filter { it.isFile && !it.name.endsWith(".tmp") }
+                    .toList()
+                CachedBook(
+                    directory = directory,
+                    bytes = files.sumOf(File::length),
+                    lastUsedAt = maxOf(
+                        directory.lastModified(),
+                        files.maxOfOrNull(File::lastModified) ?: 0L,
+                    ),
+                )
+            }
+        var totalBytes = books.sumOf(CachedBook::bytes)
+        books.sortedBy(CachedBook::lastUsedAt).forEach { book ->
             if (totalBytes <= MAX_CACHE_BYTES) return
-            val size = file.length()
-            if (file.delete()) totalBytes -= size
+            if (book.directory == protectedDirectory) return@forEach
+            if (book.directory.deleteRecursively()) totalBytes -= book.bytes
         }
-        root.walkBottomUp()
-            .filter { it.isDirectory && it != root && it.listFiles().isNullOrEmpty() }
-            .forEach(File::delete)
     }
 
-    private fun ensureInitialTrim() {
-        if (initialTrimCompleted) return
-        trimToSize()
-        initialTrimCompleted = true
+    private fun ensureInitialMaintenance(protectedBookId: String?) {
+        if (initialMaintenanceCompleted) return
+        synchronized(maintenanceLock) {
+            if (initialMaintenanceCompleted) return
+            LEGACY_CACHE_DIRECTORIES.forEach { name ->
+                runCatching { File(noBackupFilesDir, name).deleteRecursively() }
+            }
+            trimToSize(protectedBookId)
+            initialMaintenanceCompleted = true
+        }
     }
 
     private fun sha256(value: String): String = MessageDigest.getInstance("SHA-256")
@@ -135,12 +249,18 @@ class NeuralAudioCache(context: Context) {
         .joinToString("") { byte -> "%02x".format(byte) }
 
     companion object {
-        private const val CACHE_DIRECTORY = "neural_audio_cache_v2"
-        private const val PROCESSING_PROFILE = "neural-voice-profiles-v5-kokoro-fp32-continuous"
-        private const val MAGIC = 0x4c4c4132
-        private const val FORMAT_VERSION = 2
+        private const val CACHE_DIRECTORY = "neural_audio_cache_v3"
+        private val LEGACY_CACHE_DIRECTORIES = listOf("neural_audio_cache_v1", "neural_audio_cache_v2")
+        private const val PROCESSING_PROFILE = "neural-voice-profiles-v6-opus-continuous"
+        private const val MAGIC = 0x4c4c4133
+        private const val FORMAT_VERSION = 3
+        private const val PREPARED_MARKER_VERSION = 1
+        private const val CODEC_PCM16 = 1
+        private const val CODEC_OPUS = 2
         private const val MAX_SAMPLE_COUNT = 96_000 * 60 * 10
+        private const val PCM_BLOCK_SAMPLES = 8 * 1024
+        private const val IO_BUFFER_BYTES = 64 * 1024
         private const val MAX_CACHE_BYTES = 512L * 1024 * 1024
-        private const val TRIM_INTERVAL_BYTES = 16L * 1024 * 1024
+        private const val TRIM_INTERVAL_BYTES = 32L * 1024 * 1024
     }
 }

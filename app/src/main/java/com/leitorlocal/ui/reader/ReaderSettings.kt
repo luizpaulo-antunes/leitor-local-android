@@ -23,6 +23,7 @@ import androidx.compose.material3.ExposedDropdownMenuAnchorType
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -40,6 +41,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.leitorlocal.model.VoiceOption
+import com.leitorlocal.model.AudioPreparationState
 import java.util.Locale
 
 @Composable
@@ -51,6 +53,10 @@ internal fun ReaderSettingsDialog(
     voices: List<VoiceOption>,
     selectedName: String?,
     onVoiceSelected: (String?) -> Unit,
+    audioPreparation: AudioPreparationState,
+    canPrepareBook: Boolean,
+    onPrepareBook: () -> Unit,
+    onCancelBookPreparation: () -> Unit,
 ) {
     if (!visible) return
 
@@ -110,6 +116,10 @@ internal fun ReaderSettingsDialog(
                     voices = voices,
                     selectedName = selectedName,
                     onVoiceSelected = onVoiceSelected,
+                    audioPreparation = audioPreparation,
+                    canPrepareBook = canPrepareBook,
+                    onPrepareBook = onPrepareBook,
+                    onCancelBookPreparation = onCancelBookPreparation,
                     modifier = Modifier
                         .weight(1f)
                         .verticalScroll(rememberScrollState()),
@@ -128,6 +138,10 @@ private fun ReaderSettingsControls(
     voices: List<VoiceOption>,
     selectedName: String?,
     onVoiceSelected: (String?) -> Unit,
+    audioPreparation: AudioPreparationState,
+    canPrepareBook: Boolean,
+    onPrepareBook: () -> Unit,
+    onCancelBookPreparation: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
@@ -167,6 +181,57 @@ private fun ReaderSettingsControls(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
         )
+        HorizontalDivider(
+            modifier = Modifier.padding(vertical = 16.dp),
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
+        )
+        Text(
+            text = "Leitura contínua",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = audioPreparation.message.ifBlank {
+                "Prepare todo o áudio do livro antes de ouvir. O processo usa a voz e a velocidade selecionadas."
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 5.dp),
+        )
+        if (audioPreparation.isRunning || audioPreparation.isReady) {
+            LinearProgressIndicator(
+                progress = { audioPreparation.progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+            )
+            if (audioPreparation.totalChunks > 0) {
+                Text(
+                    text = "${audioPreparation.completedChunks} de ${audioPreparation.totalChunks} trechos",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+        TextButton(
+            onClick = if (audioPreparation.isRunning) {
+                onCancelBookPreparation
+            } else {
+                onPrepareBook
+            },
+            enabled = audioPreparation.isRunning ||
+                (canPrepareBook && !audioPreparation.isReady),
+            modifier = Modifier.padding(top = 4.dp),
+        ) {
+            Text(
+                when {
+                    audioPreparation.isRunning -> "Cancelar preparação"
+                    audioPreparation.isReady -> "Livro preparado"
+                    else -> "Preparar livro"
+                },
+            )
+        }
     }
 }
 

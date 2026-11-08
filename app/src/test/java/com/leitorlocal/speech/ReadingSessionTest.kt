@@ -1,6 +1,7 @@
 package com.leitorlocal.speech
 
 import com.leitorlocal.model.BookContent
+import com.leitorlocal.model.AudioPreparationState
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.SpeechChunk
 import org.junit.Assert.assertEquals
@@ -8,6 +9,33 @@ import org.junit.Assert.assertNotNull
 import org.junit.Test
 
 class ReadingSessionTest {
+    @Test
+    fun changingVoiceOrRateInvalidatesPreparedAudioState() {
+        val chunks = listOf(SpeechChunk(pageIndex = 0, text = "Trecho."))
+        ReadingSession.configure(
+            bookId = "content://teste/preparado.pdf",
+            title = "Preparado",
+            chunks = chunks,
+            startIndex = 0,
+            speechRate = 1f,
+            voiceName = EMBEDDED_NEURAL_KOKORO_DORA_VOICE_NAME,
+        )
+        ReadingSession.setAudioPreparation(
+            AudioPreparationState(
+                bookId = "content://teste/preparado.pdf",
+                isReady = true,
+                completedChunks = 1,
+                totalChunks = 1,
+            ),
+        )
+
+        ReadingSession.updateSettings(1.1f, EMBEDDED_NEURAL_KOKORO_DORA_VOICE_NAME)
+
+        assertEquals(false, ReadingSession.audioPreparation.value.isReady)
+        assertEquals(0, ReadingSession.audioPreparation.value.completedChunks)
+        assertEquals(1, ReadingSession.audioPreparation.value.totalChunks)
+    }
+
     @Test
     fun activeBookSnapshotRestoresReaderWithoutResettingPlayback() {
         val first = SpeechChunk(pageIndex = 3, text = "Trecho em reprodução.")

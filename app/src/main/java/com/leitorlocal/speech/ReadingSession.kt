@@ -1,6 +1,7 @@
 package com.leitorlocal.speech
 
 import com.leitorlocal.model.BookContent
+import com.leitorlocal.model.AudioPreparationState
 import com.leitorlocal.model.PlaybackState
 import com.leitorlocal.model.PlaybackStatus
 import com.leitorlocal.model.SpeechChunk
@@ -14,6 +15,8 @@ object ReadingSession {
     private var pagesWithoutText: Int = 0
     private val mutableState = MutableStateFlow(PlaybackState())
     val state: StateFlow<PlaybackState> = mutableState.asStateFlow()
+    private val mutableAudioPreparation = MutableStateFlow(AudioPreparationState())
+    val audioPreparation: StateFlow<AudioPreparationState> = mutableAudioPreparation.asStateFlow()
 
     @Volatile var title: String = "Leitor Local"
         private set
@@ -46,12 +49,30 @@ object ReadingSession {
             status = PlaybackStatus.PAUSED,
             currentChunkIndex = startIndex.coerceIn(0, (chunks.lastIndex).coerceAtLeast(0)),
         )
+        mutableAudioPreparation.value = AudioPreparationState(
+            bookId = bookId,
+            totalChunks = chunks.size,
+        )
     }
 
     @Synchronized
     fun updateSettings(rate: Float, voiceName: String?) {
         speechRate = rate.coerceIn(0.6f, 1.6f)
         this.voiceName = voiceName
+        mutableAudioPreparation.value = AudioPreparationState(
+            bookId = bookId,
+            totalChunks = chunks.size,
+        )
+    }
+
+    @Synchronized
+    fun setAudioPreparation(state: AudioPreparationState) {
+        if (state.bookId.isNotBlank() && state.bookId != bookId) return
+        mutableAudioPreparation.value = state.copy(
+            bookId = bookId,
+            completedChunks = state.completedChunks.coerceIn(0, chunks.size),
+            totalChunks = chunks.size,
+        )
     }
 
     fun currentChunk(): SpeechChunk? = chunks.getOrNull(mutableState.value.currentChunkIndex)

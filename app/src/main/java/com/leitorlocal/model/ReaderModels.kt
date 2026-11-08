@@ -97,6 +97,20 @@ data class BookAssistantState(
     val result: AssistantResult? = null,
 )
 
+data class AudioPreparationState(
+    val bookId: String = "",
+    val isRunning: Boolean = false,
+    val isReady: Boolean = false,
+    val completedChunks: Int = 0,
+    val totalChunks: Int = 0,
+    val message: String = "",
+) {
+    val progress: Float
+        get() = if (totalChunks <= 0) 0f else {
+            completedChunks.toFloat().div(totalChunks).coerceIn(0f, 1f)
+        }
+}
+
 data class ReaderUiState(
     val isLoading: Boolean = false,
     val loadingMessage: String = "",
@@ -112,6 +126,7 @@ data class ReaderUiState(
     val ocrMessage: String = "",
     val error: String? = null,
     val assistant: BookAssistantState = BookAssistantState(),
+    val audioPreparation: AudioPreparationState = AudioPreparationState(),
 ) {
     val currentChunk: SpeechChunk?
         get() = book?.chunks?.getOrNull(playback.currentChunkIndex)

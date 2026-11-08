@@ -8,6 +8,18 @@ Next-gen Kaldi e distribuído sob a licença Apache 2.0.
 - Projeto: https://github.com/k2-fsa/sherpa-onnx
 - Licença: https://github.com/k2-fsa/sherpa-onnx/blob/master/LICENSE
 
+## Concentus Opus
+
+O aplicativo inclui o Concentus 1.0.2, uma implementação Java portátil do
+codec Opus. Ele comprime e restaura o cache das vozes neurais inteiramente no
+aparelho, inclusive no Android 8 e 9, sem depender de um codec do fabricante ou
+de um serviço de internet. O projeto é distribuído sob licença BSD de três
+cláusulas.
+
+- Projeto: https://github.com/jaredmdobson/concentus
+- Artefato: https://central.sonatype.com/artifact/io.github.jaredmdobson/concentus/1.0.2
+- Licença: https://github.com/lostromb/concentus/blob/master/LICENSE
+
 ## Piper Phonemize
 
 O aplicativo inclui o Piper Phonemize 1.5.9 para converter o texto em português
