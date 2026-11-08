@@ -5,11 +5,18 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.io.EOFException
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.security.MessageDigest
 import kotlin.math.roundToInt
+
+internal data class NeuralPreparationSnapshot(
+    val contiguousChunks: Int = 0,
+    val preparedDurationMillis: Long = 0L,
+    val reachedBookEnd: Boolean = false,
+)
 
 class NeuralAudioCache(context: Context) {
     private val noBackupFilesDir = context.noBackupFilesDir
@@ -38,10 +45,17 @@ class NeuralAudioCache(context: Context) {
                     CODEC_PCM16 -> readPcm16(input)
                     else -> error("Codec de cache desconhecido.")
                 }
-            }.also {
+            }.also { audio ->
                 val now = System.currentTimeMillis()
                 file.setLastModified(now)
                 file.parentFile?.setLastModified(now)
+                recordPreparedAudio(
+                    bookId = bookId,
+                    chunkIndex = chunkIndex,
+                    speechRate = speechRate,
+                    voiceName = voiceName,
+                    durationMillis = audio.durationMillis(),
+                )
             }
         }.getOrElse {
             file.delete()
@@ -60,7 +74,16 @@ class NeuralAudioCache(context: Context) {
         ensureInitialMaintenance(bookId)
         if (audio.samples.isEmpty() || audio.sampleRate <= 0) return false
         val destination = cacheFile(bookId, chunkIndex, text, speechRate, voiceName)
-        if (destination.isFile) return true
+        if (destination.isFile) {
+            recordPreparedAudio(
+                bookId,
+                chunkIndex,
+                speechRate,
+                voiceName,
+                audio.durationMillis(),
+            )
+            return true
+        }
         destination.parentFile?.mkdirs()
 
         val temporary = File(destination.parentFile, ".${destination.name}.${System.nanoTime()}.tmp")
@@ -96,11 +119,49 @@ class NeuralAudioCache(context: Context) {
                     }
                 }
             }
+            recordPreparedAudio(
+                bookId,
+                chunkIndex,
+                speechRate,
+                voiceName,
+                audio.durationMillis(),
+            )
             true
         }.getOrElse {
             temporary.delete()
             false
         }
+    }
+
+    internal fun preparationSnapshot(
+        bookId: String,
+        chunkTexts: List<String>,
+        startIndex: Int,
+        speechRate: Float,
+        voiceName: String,
+    ): NeuralPreparationSnapshot {
+        if (chunkTexts.isEmpty() || startIndex !in chunkTexts.indices) {
+            return NeuralPreparationSnapshot(reachedBookEnd = chunkTexts.isEmpty())
+        }
+        val indexFile = preparationIndexFile(bookId, speechRate, voiceName)
+        val entries = synchronized(PREPARATION_INDEX_LOCK) {
+            preparationIndexEntries.getOrPut(indexFile.absolutePath) {
+                readPreparationEntries(indexFile)
+            }.toMap()
+        }
+        var index = startIndex
+        var durationMillis = 0L
+        while (index < chunkTexts.size) {
+            val duration = entries[index]?.takeIf { it > 0L } ?: break
+            if (!cacheFile(bookId, index, chunkTexts[index], speechRate, voiceName).isFile) break
+            durationMillis += duration
+            index += 1
+        }
+        return NeuralPreparationSnapshot(
+            contiguousChunks = index - startIndex,
+            preparedDurationMillis = durationMillis,
+            reachedBookEnd = index >= chunkTexts.size,
+        )
     }
 
     fun markBookPrepared(
@@ -197,6 +258,79 @@ class NeuralAudioCache(context: Context) {
     private fun preparedMarker(bookId: String, speechRate: Float, voiceName: String): File =
         File(bookDirectory(bookId), ".prepared_${profileKey(speechRate, voiceName).take(20)}")
 
+    private fun preparationIndexFile(bookId: String, speechRate: Float, voiceName: String): File =
+        File(bookDirectory(bookId), ".progress_${profileKey(speechRate, voiceName).take(20)}")
+
+    private fun recordPreparedAudio(
+        bookId: String,
+        chunkIndex: Int,
+        speechRate: Float,
+        voiceName: String,
+        durationMillis: Long,
+    ) {
+        if (chunkIndex < 0 || durationMillis <= 0L) return
+        val file = preparationIndexFile(bookId, speechRate, voiceName)
+        synchronized(PREPARATION_INDEX_LOCK) {
+            val entries = preparationIndexEntries.getOrPut(file.absolutePath) {
+                readPreparationEntries(file)
+            }
+            if (hasValidPreparationHeader(file) && entries[chunkIndex] == durationMillis) return
+            file.parentFile?.mkdirs()
+            if (!hasValidPreparationHeader(file)) {
+                file.delete()
+                DataOutputStream(BufferedOutputStream(FileOutputStream(file))).use { output ->
+                    output.writeInt(PREPARATION_INDEX_MAGIC)
+                    output.writeInt(PREPARATION_INDEX_VERSION)
+                }
+                entries.clear()
+            }
+            DataOutputStream(BufferedOutputStream(FileOutputStream(file, true))).use { output ->
+                output.writeInt(chunkIndex)
+                output.writeLong(durationMillis)
+            }
+            entries[chunkIndex] = durationMillis
+        }
+    }
+
+    private fun readPreparationEntries(file: File): MutableMap<Int, Long> {
+        val entries = linkedMapOf<Int, Long>()
+        if (!hasValidPreparationHeader(file)) return entries
+        runCatching {
+            DataInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
+                input.readInt()
+                input.readInt()
+                while (true) {
+                    try {
+                        val chunkIndex = input.readInt()
+                        val durationMillis = input.readLong()
+                        if (chunkIndex >= 0 && durationMillis > 0L) {
+                            entries[chunkIndex] = durationMillis
+                        }
+                    } catch (_: EOFException) {
+                        break
+                    }
+                }
+            }
+        }.onFailure {
+            file.delete()
+            entries.clear()
+        }
+        return entries
+    }
+
+    private fun hasValidPreparationHeader(file: File): Boolean {
+        if (!file.isFile || file.length() < PREPARATION_INDEX_HEADER_BYTES) return false
+        return runCatching {
+            DataInputStream(BufferedInputStream(FileInputStream(file))).use { input ->
+                input.readInt() == PREPARATION_INDEX_MAGIC &&
+                    input.readInt() == PREPARATION_INDEX_VERSION
+            }
+        }.getOrDefault(false)
+    }
+
+    private fun NeuralAudio.durationMillis(): Long =
+        if (sampleRate <= 0) 0L else samples.size.toLong() * 1_000L / sampleRate
+
     private fun profileKey(speechRate: Float, voiceName: String): String {
         val rateKey = (speechRate.coerceIn(0.6f, 1.6f) * 1_000).roundToInt()
         return sha256("$PROCESSING_PROFILE\n$rateKey\n$voiceName")
@@ -255,6 +389,9 @@ class NeuralAudioCache(context: Context) {
         private const val MAGIC = 0x4c4c4133
         private const val FORMAT_VERSION = 3
         private const val PREPARED_MARKER_VERSION = 1
+        private const val PREPARATION_INDEX_MAGIC = 0x4c4c5031
+        private const val PREPARATION_INDEX_VERSION = 1
+        private const val PREPARATION_INDEX_HEADER_BYTES = 8L
         private const val CODEC_PCM16 = 1
         private const val CODEC_OPUS = 2
         private const val MAX_SAMPLE_COUNT = 96_000 * 60 * 10
@@ -262,5 +399,7 @@ class NeuralAudioCache(context: Context) {
         private const val IO_BUFFER_BYTES = 64 * 1024
         private const val MAX_CACHE_BYTES = 512L * 1024 * 1024
         private const val TRIM_INTERVAL_BYTES = 32L * 1024 * 1024
+        private val PREPARATION_INDEX_LOCK = Any()
+        private val preparationIndexEntries = mutableMapOf<String, MutableMap<Int, Long>>()
     }
 }

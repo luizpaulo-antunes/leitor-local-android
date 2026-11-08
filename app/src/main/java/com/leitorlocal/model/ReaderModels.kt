@@ -101,13 +101,23 @@ data class AudioPreparationState(
     val bookId: String = "",
     val isRunning: Boolean = false,
     val isReady: Boolean = false,
+    val sampleReady: Boolean = false,
+    val startChunkIndex: Int = 0,
     val completedChunks: Int = 0,
     val totalChunks: Int = 0,
+    val preparedDurationMillis: Long = 0L,
+    val targetDurationMillis: Long = 0L,
+    val estimatedWaitMillis: Long? = null,
+    val realTimeFactor: Float? = null,
     val message: String = "",
 ) {
     val progress: Float
-        get() = if (totalChunks <= 0) 0f else {
+        get() = if (targetDurationMillis > 0L) {
+            preparedDurationMillis.toFloat().div(targetDurationMillis).coerceIn(0f, 1f)
+        } else if (totalChunks > 0) {
             completedChunks.toFloat().div(totalChunks).coerceIn(0f, 1f)
+        } else {
+            0f
         }
 }
 

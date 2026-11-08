@@ -42,6 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.leitorlocal.model.VoiceOption
 import com.leitorlocal.model.AudioPreparationState
+import com.leitorlocal.speech.formatPreparationDuration
+import com.leitorlocal.speech.formatRealTimeFactor
 import java.util.Locale
 
 @Composable
@@ -57,6 +59,7 @@ internal fun ReaderSettingsDialog(
     canPrepareBook: Boolean,
     onPrepareBook: () -> Unit,
     onCancelBookPreparation: () -> Unit,
+    onPlayPreparedSample: () -> Unit,
 ) {
     if (!visible) return
 
@@ -120,6 +123,7 @@ internal fun ReaderSettingsDialog(
                     canPrepareBook = canPrepareBook,
                     onPrepareBook = onPrepareBook,
                     onCancelBookPreparation = onCancelBookPreparation,
+                    onPlayPreparedSample = onPlayPreparedSample,
                     modifier = Modifier
                         .weight(1f)
                         .verticalScroll(rememberScrollState()),
@@ -142,6 +146,7 @@ private fun ReaderSettingsControls(
     canPrepareBook: Boolean,
     onPrepareBook: () -> Unit,
     onCancelBookPreparation: () -> Unit,
+    onPlayPreparedSample: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
@@ -192,25 +197,37 @@ private fun ReaderSettingsControls(
         )
         Text(
             text = audioPreparation.message.ifBlank {
-                "Prepare todo o áudio do livro antes de ouvir. O processo usa a voz e a velocidade selecionadas."
+                "Prepare uma reserva de áudio a partir da posição atual. O processo mede a velocidade antes de calcular quanto precisa ficar pronto."
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 5.dp),
         )
-        if (audioPreparation.isRunning || audioPreparation.isReady) {
+        if (
+            audioPreparation.isRunning ||
+            audioPreparation.isReady ||
+            audioPreparation.preparedDurationMillis > 0L
+        ) {
             LinearProgressIndicator(
                 progress = { audioPreparation.progress },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 10.dp),
             )
-            if (audioPreparation.totalChunks > 0) {
+            if (audioPreparation.targetDurationMillis > 0L) {
                 Text(
-                    text = "${audioPreparation.completedChunks} de ${audioPreparation.totalChunks} trechos",
+                    text = "${formatPreparationDuration(audioPreparation.preparedDurationMillis)} de ${formatPreparationDuration(audioPreparation.targetDurationMillis)} de reserva",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            audioPreparation.realTimeFactor?.let { realTimeFactor ->
+                Text(
+                    text = "Geração: ${formatRealTimeFactor(realTimeFactor)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 2.dp),
                 )
             }
         }
@@ -227,10 +244,16 @@ private fun ReaderSettingsControls(
             Text(
                 when {
                     audioPreparation.isRunning -> "Cancelar preparação"
-                    audioPreparation.isReady -> "Livro preparado"
-                    else -> "Preparar livro"
+                    audioPreparation.isReady -> "Reserva pronta"
+                    audioPreparation.preparedDurationMillis > 0L -> "Continuar preparação"
+                    else -> "Preparar leitura"
                 },
             )
+        }
+        if (audioPreparation.isRunning && audioPreparation.sampleReady) {
+            TextButton(onClick = onPlayPreparedSample) {
+                Text("Ouvir amostra agora")
+            }
         }
     }
 }

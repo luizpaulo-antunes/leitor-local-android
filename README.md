@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.14.0.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.15.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.14.0.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.15.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -40,11 +40,12 @@ aconteceu em quatro frentes:
 4. **Inteligência local:** pesquisa por significado, explicação do trecho,
    resumo extrativo e reconhecimento visual, sempre com fontes do próprio PDF.
 
-Na versão `0.14.0`, o Kokoro passou a aguardar uma reserva de pelo
-menos oito trechos e aproximadamente 90 segundos antes de iniciar. A preparação
-inicial pode levar um pouco mais de tempo, mas evita que a voz leia dois trechos
-e pare enquanto o próximo áudio ainda está sendo sintetizado. O resultado é uma
-narração muito mais contínua.
+Na versão `0.15.0`, **Preparar leitura** deixou de sintetizar obrigatoriamente o
+livro inteiro. O aplicativo começa na posição atual, cria primeiro uma amostra
+de um minuto, mede a velocidade real do modelo e calcula a reserva necessária
+em minutos de áudio. A tela mostra duração pronta, velocidade relativa ao tempo
+real e estimativa de espera. Assim já é possível ouvir e validar a amostra sem
+aguardar milhares de trechos.
 
 ## Estado atual
 
@@ -76,7 +77,9 @@ narração muito mais contínua.
 - Aplica um perfil próprio a cada família: Miro recebe redução de ruído; Dii e Kokoro preservam a resolução original.
 - Reforça o volume neural com limitador contra saturação; o Miro recebe 43% de ganho adicional para equilibrar a Dii.
 - Prepara e guarda localmente as próximas páginas em áudio tratado para iniciar e continuar a leitura com menos espera.
-- Permite preparar todo o livro antecipadamente, com progresso e cancelamento, para uma reprodução contínua.
+- Prepara uma reserva adaptativa a partir da posição atual, com amostra rápida, RTF, ETA e cancelamento.
+- Permite ouvir a amostra de um minuto enquanto preserva no cache tudo o que já foi produzido.
+- Mantém um índice persistente dos intervalos contínuos preparados para retomar o trabalho sem recontar milhares de trechos.
 - Comprime offline o cache do Kokoro em Opus e grava o áudio fora do caminho crítico da reprodução.
 - Reconhece progressivamente páginas escaneadas com OCR offline e mantém o resultado em cache.
 - Identifica figuras acompanhadas por legenda ou marcação de acessibilidade no PDF.
@@ -151,13 +154,23 @@ uma reserva de pelo menos oito trechos e cerca de 90 segundos de áudio para
 evitar interrupções entre parágrafos. Somente o Miro passa pelo redutor de ruído
 de 16 kHz, pois os demais modelos já geram áudio limpo.
 
-Nos ajustes de leitura, o botão **Preparar livro** sintetiza e guarda todos os
-trechos com a voz e a velocidade selecionadas. O progresso aparece no aplicativo
-e em uma notificação, pode ser cancelado e continua com a tela apagada. Quando o
-livro está pronto, a reprodução usa o áudio já armazenado e não precisa esperar
-o Kokoro entre os parágrafos. Durante a narração, o OCR é temporariamente
-pausado para deixar o processador disponível para a voz; em livros escaneados,
-o preparo completo é liberado depois que o OCR termina de montar os trechos.
+Nos ajustes de leitura, o botão **Preparar leitura** trabalha a partir da posição
+atual. Primeiro ele cria aproximadamente um minuto de áudio validado; nesse
+momento o botão **Ouvir amostra agora** já pode iniciar a reprodução. Em seguida,
+o aplicativo mede o RTF — tempo gasto na síntese dividido pela duração produzida
+— e calcula uma reserva com margem de segurança. Se o aparelho gera mais rápido
+que a reprodução, a reserva padrão do Kokoro é de dez minutos. Se gera mais
+devagar, o alvo cresce somente até o necessário para que o restante possa ser
+produzido durante a leitura sem esvaziar o buffer.
+
+O progresso é apresentado em minutos, com velocidade e ETA, em vez de uma fila
+abstrata de milhares de trechos. Cada áudio novo passa por verificações contra
+silêncio, valores inválidos e saturação excessiva antes de ser considerado
+pronto. O índice da preparação é persistente: cancelar, fechar o aplicativo ou
+reiniciar o aparelho não elimina o áudio já criado. Durante a narração, o OCR é
+temporariamente pausado para deixar o processador disponível para a voz; em
+livros escaneados, a preparação é liberada depois que o OCR termina de montar os
+trechos.
 
 Ao abrir um livro com uma voz neural selecionada, o aplicativo começa a preparar em
 segundo plano até três páginas a partir da posição atual. Cada trecho é

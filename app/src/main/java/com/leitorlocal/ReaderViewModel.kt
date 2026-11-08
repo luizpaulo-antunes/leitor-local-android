@@ -21,6 +21,8 @@ import com.leitorlocal.speech.NeuralAudioCache
 import com.leitorlocal.speech.TtsVoiceCatalog
 import com.leitorlocal.speech.EMBEDDED_NEURAL_VOICES
 import com.leitorlocal.speech.embeddedNeuralVoice
+import com.leitorlocal.speech.formatPreparationDuration
+import com.leitorlocal.speech.preparationMinimumReserveMillis
 import com.leitorlocal.model.VoiceOption
 import com.leitorlocal.model.AssistantResult
 import com.leitorlocal.model.AssistantSource
@@ -175,7 +177,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
             mutableUiState.update {
                 it.copy(
                     audioPreparation = it.audioPreparation.copy(
-                        message = "Aguarde o OCR terminar antes de preparar o áudio completo.",
+                        message = "Aguarde o OCR terminar antes de preparar a leitura contínua.",
                     ),
                 )
             }
@@ -552,24 +554,44 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val voice = embeddedNeuralVoice(mutableUiState.value.selectedVoiceName) ?: return
         val speechRate = mutableUiState.value.speechRate
         viewModelScope.launch(Dispatchers.IO) {
-            val ready = neuralAudioCache.isBookPrepared(
+            val startIndex = ReadingSession.state.value.currentChunkIndex
+                .coerceIn(0, (book.chunks.lastIndex).coerceAtLeast(0))
+            val snapshot = neuralAudioCache.preparationSnapshot(
+                bookId = book.uri,
+                chunkTexts = book.chunks.map { it.text },
+                startIndex = startIndex,
+                speechRate = speechRate,
+                voiceName = voice.name,
+            )
+            val fullBookReady = neuralAudioCache.isBookPrepared(
                 bookId = book.uri,
                 chunkCount = book.chunks.size,
                 speechRate = speechRate,
                 voiceName = voice.name,
             )
+            val targetDurationMillis = preparationMinimumReserveMillis(voice)
+            val ready = fullBookReady || snapshot.reachedBookEnd ||
+                snapshot.preparedDurationMillis >= targetDurationMillis
             if (ReadingSession.bookId != book.uri) return@launch
             ReadingSession.setAudioPreparation(
                 ReadingSession.audioPreparation.value.copy(
                     bookId = book.uri,
                     isRunning = false,
                     isReady = ready,
-                    completedChunks = if (ready) book.chunks.size else 0,
+                    sampleReady = snapshot.preparedDurationMillis >= 60_000L,
+                    startChunkIndex = startIndex,
+                    completedChunks = snapshot.contiguousChunks,
                     totalChunks = book.chunks.size,
+                    preparedDurationMillis = snapshot.preparedDurationMillis,
+                    targetDurationMillis = targetDurationMillis,
+                    estimatedWaitMillis = null,
+                    realTimeFactor = null,
                     message = if (ready) {
-                        "Livro pronto para leitura contínua."
+                        "Reserva de ${formatPreparationDuration(snapshot.preparedDurationMillis)} pronta para ouvir."
+                    } else if (snapshot.preparedDurationMillis > 0L) {
+                        "${formatPreparationDuration(snapshot.preparedDurationMillis)} já estão no cache. Continue para completar a reserva."
                     } else {
-                        "Prepare todo o áudio antes de ouvir para eliminar pausas de síntese."
+                        "Prepare uma reserva a partir da posição atual. Em 1 minuto de áudio você já pode validar a voz."
                     },
                 ),
             )

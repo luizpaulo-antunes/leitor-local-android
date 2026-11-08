@@ -124,6 +124,7 @@ internal fun ReaderContent(
                 ?.isEmbeddedNeural == true && !state.isOcrRunning && !isPlaying,
             onPrepareBook = onPrepareBook,
             onCancelBookPreparation = onCancelBookPreparation,
+            onPlayPreparedSample = onPlayPause,
         )
 
         if (showPagesWithoutTextToast) {

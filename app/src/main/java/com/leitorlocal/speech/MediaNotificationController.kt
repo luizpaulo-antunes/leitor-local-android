@@ -12,6 +12,7 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import com.leitorlocal.MainActivity
 import com.leitorlocal.R
+import com.leitorlocal.model.AudioPreparationState
 import com.leitorlocal.model.PlaybackStatus
 
 internal data class MediaNotificationActions(
@@ -79,16 +80,24 @@ internal class MediaNotificationController(
         }
     }
 
-    fun startPreparation(completedChunks: Int, totalChunks: Int) {
-        val progress = completedChunks.coerceIn(0, totalChunks.coerceAtLeast(0))
+    fun startPreparation(state: AudioPreparationState) {
+        val progressMax = 1_000
+        val progress = (state.progress * progressMax).toInt().coerceIn(0, progressMax)
         val notification = Notification.Builder(service, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentTitle("Preparando leitura contínua")
             .setContentText(
-                if (totalChunks > 0) {
-                    "Trecho $progress de $totalChunks"
+                if (state.preparedDurationMillis > 0L) {
+                    buildString {
+                        append(formatPreparationDuration(state.preparedDurationMillis))
+                        append(" prontos")
+                        state.estimatedWaitMillis?.takeIf { it > 0L }?.let {
+                            append(" · ETA ")
+                            append(formatPreparationDuration(it))
+                        }
+                    }
                 } else {
-                    "Preparando o áudio do livro"
+                    "Medindo a velocidade da voz offline"
                 },
             )
             .setContentIntent(openAppPendingIntent())
@@ -98,7 +107,7 @@ internal class MediaNotificationController(
             .setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(buildPreparationPublicNotification())
             .setShowWhen(false)
-            .setProgress(totalChunks.coerceAtLeast(0), progress, totalChunks <= 0)
+            .setProgress(progressMax, progress, state.targetDurationMillis <= 0L)
             .addAction(
                 Notification.Action.Builder(
                     android.R.drawable.ic_menu_close_clear_cancel,
