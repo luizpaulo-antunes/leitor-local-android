@@ -9,11 +9,11 @@ Não há conta, servidor, analytics ou API paga.
 
 **Você não precisa do Android Studio para usar o aplicativo.**
 
-[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.12.2.apk)
+[Baixar o APK da versão mais recente](https://github.com/luizpaulo-antunes/leitor-local-android/releases/latest/download/Leitor-Local-v0.13.0.apk)
 
 No celular Android:
 
-1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.12.2.apk`.
+1. Abra o link acima e baixe o arquivo `Leitor-Local-v0.13.0.apk`.
 2. Abra o APK baixado.
 3. Se o Android solicitar, permita que o navegador instale aplicativos de
    fontes desconhecidas.
@@ -62,6 +62,18 @@ estão disponíveis neste repositório.
 - Mantém título e trecho do livro ocultos na visualização pública da tela bloqueada.
 - Associa o progresso explicitamente ao livro e grava apenas quando o trecho muda, reduzindo I/O durante o karaokê.
 - Valida caches pelo tamanho e pela data de modificação do PDF e limita o espaço usado por artefatos regeneráveis.
+- Reconstrói offline a ordem de leitura de páginas e digitalizações com duas colunas.
+- Pesquisa o livro por significado, com índice local em português e links para as páginas encontradas.
+- Resume capítulos e explica o trecho atual de forma extrativa, sempre mostrando as fontes do próprio PDF.
+- Classifica figuras com um modelo visual incluído no APK e combina os elementos reconhecidos com legenda, texto alternativo e OCR.
+
+## Inteligência offline
+
+O botão de busca na tela do livro abre as funções **Buscar**, **Explicar** e
+**Resumir**. A análise é executada no aparelho e suas respostas são extrativas:
+o aplicativo não inventa conteúdo, mostra os trechos usados e permite tocar em
+cada fonte para ir até a página correspondente. O manifesto não solicita
+permissão de internet e não existe fallback para serviços externos.
 
 ## Figuras durante a leitura
 
@@ -86,7 +98,8 @@ configurações do Android. Miro e Dii continuam disponíveis para comparação 
 como alternativas mais leves de processamento.
 
 O Kokoro usa o modelo oficial FP32, recebe fonemas pt-BR produzidos localmente e
-preserva a saída em 24 kHz. A reprodução mantém um trecho adicional pronto para
+preserva a saída em 24 kHz. Antes de iniciar a reprodução, o aplicativo mantém
+uma reserva de pelo menos quatro trechos e cerca de 30 segundos de áudio para
 evitar interrupções entre parágrafos. Somente o Miro passa pelo redutor de ruído
 de 16 kHz, pois os demais modelos já geram áudio limpo.
 

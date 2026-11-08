@@ -281,9 +281,11 @@ class TextPreprocessorTest {
             caption = "Figura 1.1. O ciclo de geração.",
             alternativeText = "Um texto inicial à esquerda.",
             ocrText = "2 calcula as chances\ntelhado\n1 olha o texto todo\n4 cola no fim e repete\n3 sorteia entre os mais prováveis",
+            visualLabels = listOf("diagrama", "texto"),
         )
 
         assertTrue(description.contains("Figura 1.1"))
+        assertTrue(description.contains("diagrama, texto"))
         assertTrue(description.indexOf("1 olha") < description.indexOf("2 calcula"))
         assertTrue(description.indexOf("2 calcula") < description.indexOf("3 sorteia"))
         assertTrue(description.indexOf("3 sorteia") < description.indexOf("4 cola"))

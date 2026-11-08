@@ -36,8 +36,8 @@ android {
         applicationId = "com.leitorlocal"
         minSdk = 26
         targetSdk = 37
-        versionCode = 21
-        versionName = "0.12.2"
+        versionCode = 22
+        versionName = "0.13.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -212,6 +212,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-core")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:image-labeling:17.0.9")
     implementation(files("libs/sherpa-onnx-2.0.1.aar"))
     implementation(files("libs/piper-phonemize-v1.5.9.aar"))
 

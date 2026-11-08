@@ -24,6 +24,7 @@ data class FigureContent(
     val caption: String,
     val alternativeText: String,
     val ocrText: String,
+    val visualLabels: List<String> = emptyList(),
 )
 
 data class BookContent(
@@ -77,6 +78,25 @@ data class VoiceOption(
     val isEmbeddedNeural: Boolean = false,
 )
 
+data class AssistantSource(
+    val chunkIndex: Int,
+    val pageNumber: Int,
+    val excerpt: String,
+)
+
+data class AssistantResult(
+    val title: String,
+    val body: String,
+    val sources: List<AssistantSource>,
+)
+
+data class BookAssistantState(
+    val isOpen: Boolean = false,
+    val isWorking: Boolean = false,
+    val query: String = "",
+    val result: AssistantResult? = null,
+)
+
 data class ReaderUiState(
     val isLoading: Boolean = false,
     val loadingMessage: String = "",
@@ -91,6 +111,7 @@ data class ReaderUiState(
     val isOcrRunning: Boolean = false,
     val ocrMessage: String = "",
     val error: String? = null,
+    val assistant: BookAssistantState = BookAssistantState(),
 ) {
     val currentChunk: SpeechChunk?
         get() = book?.chunks?.getOrNull(playback.currentChunkIndex)

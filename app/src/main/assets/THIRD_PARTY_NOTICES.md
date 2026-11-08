@@ -19,3 +19,7 @@ model notices received with the Sherpa-ONNX packages are preserved at
 `vits-piper-pt_BR-miro-high/README.md` and
 `vits-piper-pt_BR-dii-high/README.md`. Where an older packaged notice differs,
 this application follows the current, more restrictive official terms.
+
+Google ML Kit Text Recognition and Image Labeling models are bundled for
+on-device document and figure analysis:
+https://developers.google.com/ml-kit

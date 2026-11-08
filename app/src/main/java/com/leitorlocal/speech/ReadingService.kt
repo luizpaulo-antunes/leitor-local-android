@@ -34,12 +34,30 @@ private sealed interface NeuralQueueItem {
     object End : NeuralQueueItem
 }
 
-internal fun neuralPrebufferChunkCount(voice: EmbeddedNeuralVoice): Int =
+internal data class NeuralPrebufferPolicy(
+    val minimumChunks: Int,
+    val minimumDurationMillis: Long,
+)
+
+internal fun neuralPrebufferPolicy(voice: EmbeddedNeuralVoice): NeuralPrebufferPolicy =
     if (voice.engine == EmbeddedNeuralEngine.KOKORO) {
-        KOKORO_NEURAL_PREBUFFER_CHUNKS
+        NeuralPrebufferPolicy(
+            minimumChunks = KOKORO_NEURAL_PREBUFFER_CHUNKS,
+            minimumDurationMillis = KOKORO_NEURAL_PREBUFFER_MILLIS,
+        )
     } else {
-        DEFAULT_NEURAL_PREBUFFER_CHUNKS
+        NeuralPrebufferPolicy(
+            minimumChunks = DEFAULT_NEURAL_PREBUFFER_CHUNKS,
+            minimumDurationMillis = 0L,
+        )
     }
+
+internal fun hasRequiredNeuralPrebuffer(
+    policy: NeuralPrebufferPolicy,
+    chunkCount: Int,
+    durationMillis: Long,
+): Boolean =
+    chunkCount >= policy.minimumChunks && durationMillis >= policy.minimumDurationMillis
 
 class ReadingService : Service() {
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -503,10 +521,20 @@ class ReadingService : Service() {
     ) {
         val buffered = mutableListOf<NeuralQueueItem.Audio>()
         var pendingTerminal: NeuralQueueItem? = null
-        val requiredPrebuffer = neuralPrebufferChunkCount(voice)
-        while (buffered.size < requiredPrebuffer && pendingTerminal == null) {
+        var bufferedDurationMillis = 0L
+        val prebufferPolicy = neuralPrebufferPolicy(voice)
+        while (
+            !hasRequiredNeuralPrebuffer(
+                policy = prebufferPolicy,
+                chunkCount = buffered.size,
+                durationMillis = bufferedDurationMillis,
+            ) && pendingTerminal == null
+        ) {
             when (val item = pollNeuralItem(requestId, queue) ?: return) {
-                is NeuralQueueItem.Audio -> buffered += item
+                is NeuralQueueItem.Audio -> {
+                    buffered += item
+                    bufferedDurationMillis += item.durationMillis()
+                }
                 else -> pendingTerminal = item
             }
         }
@@ -584,6 +612,11 @@ class ReadingService : Service() {
         check(item.sampleRate == expectedSampleRate) { "A taxa do áudio neural mudou durante a leitura." }
         return neuralPlayer.write(item.samples, item.chunk) &&
             isNeuralRequestActive(requestId)
+    }
+
+    private fun NeuralQueueItem.Audio.durationMillis(): Long {
+        if (sampleRate <= 0) return 0L
+        return samples.size.toLong() * 1_000L / sampleRate
     }
 
     private fun handleNeuralTerminal(requestId: Long, item: NeuralQueueItem) {
@@ -945,4 +978,5 @@ class ReadingService : Service() {
 }
 
 private const val DEFAULT_NEURAL_PREBUFFER_CHUNKS = 1
-private const val KOKORO_NEURAL_PREBUFFER_CHUNKS = 2
+private const val KOKORO_NEURAL_PREBUFFER_CHUNKS = 4
+private const val KOKORO_NEURAL_PREBUFFER_MILLIS = 30_000L

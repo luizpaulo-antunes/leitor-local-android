@@ -5,10 +5,14 @@ object FigureDescriptionComposer {
         caption: String,
         alternativeText: String,
         ocrText: String,
+        visualLabels: List<String> = emptyList(),
     ): String {
         val parts = mutableListOf<String>()
         addDistinct(parts, caption)
         addDistinct(parts, alternativeText)
+        if (visualLabels.isNotEmpty()) {
+            addDistinct(parts, "Elementos reconhecidos na imagem: ${visualLabels.joinToString(", ")}.")
+        }
         addDistinct(parts, ocrNarration(ocrText))
         if (parts.isEmpty()) return "Há uma figura nesta página."
         if (caption.isBlank()) parts.add(0, "Descrição da figura.")

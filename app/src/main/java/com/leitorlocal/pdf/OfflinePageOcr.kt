@@ -49,7 +49,19 @@ class OfflinePageOcr(context: Context) : AutoCloseable {
         runCatching {
             recognizer.process(InputImage.fromBitmap(bitmap, 0))
                 .addOnSuccessListener { result ->
-                    if (continuation.isActive) continuation.resume(result.text)
+                    val blocks = result.textBlocks.mapNotNull { block ->
+                        val bounds = block.boundingBox ?: return@mapNotNull null
+                        LayoutTextBlock(
+                            text = block.text,
+                            left = bounds.left.toFloat(),
+                            top = bounds.top.toFloat(),
+                            right = bounds.right.toFloat(),
+                            bottom = bounds.bottom.toFloat(),
+                            startsParagraph = true,
+                        )
+                    }
+                    val ordered = DocumentLayoutAnalyzer.asText(blocks, bitmap.width.toFloat())
+                    if (continuation.isActive) continuation.resume(ordered.ifBlank { result.text })
                 }
                 .addOnFailureListener { failure ->
                     if (continuation.isActive) continuation.resumeWithException(failure)

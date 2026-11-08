@@ -53,8 +53,23 @@ class PdfBookParser(private val context: Context) {
                     currentCoroutineContext().ensureActive()
                     stripper.startPage = pageIndex + 1
                     stripper.endPage = pageIndex + 1
-                    rawPages += stripper.getText(document)
-                    layoutLinesByPage += stripper.pageLines().map { line ->
+                    stripper.getText(document)
+                    val pageLines = stripper.pageLines()
+                    val pageWidth = document.getPage(pageIndex).mediaBox.width
+                    rawPages += DocumentLayoutAnalyzer.asText(
+                        blocks = pageLines.map { line ->
+                            LayoutTextBlock(
+                                text = line.text,
+                                left = line.left,
+                                top = line.top,
+                                right = line.right,
+                                bottom = line.bottom,
+                                startsParagraph = line.startsParagraph,
+                            )
+                        },
+                        pageWidth = pageWidth,
+                    )
+                    layoutLinesByPage += pageLines.map { line ->
                         TextLineLayout(
                             text = line.text,
                             fontSizePt = line.fontSizePt,
@@ -208,11 +223,13 @@ class PdfBookParser(private val context: Context) {
                 caption = figure.caption,
                 alternativeText = figure.alternativeText,
                 ocrText = figure.ocrText,
+                visualLabels = figure.visualLabels,
             )
             val narration = FigureDescriptionComposer.compose(
                 caption = figure.caption,
                 alternativeText = figure.alternativeText,
                 ocrText = figure.ocrText,
+                visualLabels = figure.visualLabels,
             )
             TextPreprocessor.splitIntoChunks(narration).forEach { chunkText ->
                 add(SpeechChunk(pageIndex = pageIndex, text = chunkText, figure = content))

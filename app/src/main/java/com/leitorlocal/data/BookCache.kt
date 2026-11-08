@@ -55,6 +55,11 @@ class BookCache(private val context: Context) {
                                 caption = it.optString("caption"),
                                 alternativeText = it.optString("alternativeText"),
                                 ocrText = it.optString("ocrText"),
+                                visualLabels = it.optJSONArray("visualLabels")?.let { labels ->
+                                    buildList {
+                                        for (labelIndex in 0 until labels.length()) add(labels.getString(labelIndex))
+                                    }
+                                }.orEmpty(),
                             )
                         },
                         ranges = ranges,
@@ -106,13 +111,17 @@ class BookCache(private val context: Context) {
                     item.put("ranges", ranges)
                 }
                 chunk.figure?.let { figure ->
+                    val visualLabels = JSONArray().apply {
+                        figure.visualLabels.forEach(::put)
+                    }
                     item.put(
                         "figure",
                         JSONObject()
                             .put("imagePath", figure.imagePath ?: "")
                             .put("caption", figure.caption)
                             .put("alternativeText", figure.alternativeText)
-                            .put("ocrText", figure.ocrText),
+                            .put("ocrText", figure.ocrText)
+                            .put("visualLabels", visualLabels),
                     )
                 }
                 chunks.put(item)
@@ -139,6 +148,6 @@ class BookCache(private val context: Context) {
     }
 
     companion object {
-        const val CACHE_DIRECTORY = "processed_books_v7"
+        const val CACHE_DIRECTORY = "processed_books_v8"
     }
 }

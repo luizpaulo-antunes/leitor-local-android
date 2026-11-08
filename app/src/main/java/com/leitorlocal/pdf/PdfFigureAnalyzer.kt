@@ -25,6 +25,7 @@ data class AnalyzedFigure(
     val caption: String,
     val alternativeText: String,
     val ocrText: String,
+    val visualLabels: List<String>,
 )
 
 class PdfFigureAnalyzer(private val context: Context) {
@@ -48,6 +49,7 @@ class PdfFigureAnalyzer(private val context: Context) {
             .apply { mkdirs() }
         val result = mutableMapOf<Int, List<AnalyzedFigure>>()
         val ocr = FigureOcr()
+        val visualAnalyzer = FigureVisualAnalyzer()
         try {
             targetPages.forEachIndexed { progressIndex, pageIndex ->
                 val captions = captionsByPage.getOrNull(pageIndex).orEmpty()
@@ -74,6 +76,7 @@ class PdfFigureAnalyzer(private val context: Context) {
                                 saveFigure(it, bookDirectory, pageIndex, figureIndex)
                             }
                             val ocrText = bitmap?.let { ocr.recognize(it) }.orEmpty()
+                            val visualLabels = bitmap?.let { visualAnalyzer.describe(it) }.orEmpty()
                             add(
                                 AnalyzedFigure(
                                     pageIndex = pageIndex,
@@ -82,6 +85,7 @@ class PdfFigureAnalyzer(private val context: Context) {
                                     caption = caption?.text.orEmpty(),
                                     alternativeText = alternative,
                                     ocrText = ocrText,
+                                    visualLabels = visualLabels,
                                 ),
                             )
                         } finally {
@@ -93,6 +97,7 @@ class PdfFigureAnalyzer(private val context: Context) {
             }
         } finally {
             ocr.close()
+            visualAnalyzer.close()
         }
         return result
     }

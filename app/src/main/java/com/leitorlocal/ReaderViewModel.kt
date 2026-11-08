@@ -21,6 +21,10 @@ import com.leitorlocal.speech.TtsVoiceCatalog
 import com.leitorlocal.speech.EMBEDDED_NEURAL_VOICES
 import com.leitorlocal.speech.embeddedNeuralVoice
 import com.leitorlocal.model.VoiceOption
+import com.leitorlocal.model.AssistantResult
+import com.leitorlocal.model.AssistantSource
+import com.leitorlocal.intelligence.BookInsight
+import com.leitorlocal.intelligence.BookIntelligence
 import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +57,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
     private var loadJob: Job? = null
     private var renderJob: Job? = null
     private var ocrJob: Job? = null
+    private var intelligenceJob: Job? = null
+    private var bookIntelligence: Pair<String, BookIntelligence>? = null
     private var lastRenderedPage = -1
     private var lastVoiceRefreshAt = 0L
     private val loadRequests = LoadRequestTracker()
@@ -96,6 +102,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         loadRequests.invalidate()
         loadJob?.cancel()
         ocrJob?.cancel()
+        intelligenceJob?.cancel()
         if (uiState.value.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) pause()
         mutableUiState.update {
             it.copy(
@@ -104,6 +111,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 showingLibrary = true,
                 isOcrRunning = false,
                 ocrMessage = "",
+                assistant = it.assistant.copy(isOpen = false, isWorking = false),
                 library = preferences.library(),
             )
         }
@@ -154,6 +162,73 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun openAssistant() {
+        if (uiState.value.book == null) return
+        mutableUiState.update { it.copy(assistant = it.assistant.copy(isOpen = true)) }
+    }
+
+    fun closeAssistant() {
+        intelligenceJob?.cancel()
+        mutableUiState.update {
+            it.copy(assistant = it.assistant.copy(isOpen = false, isWorking = false))
+        }
+    }
+
+    fun searchBook(query: String) {
+        val cleanQuery = query.trim()
+        if (cleanQuery.isEmpty()) return
+        runIntelligence(query = cleanQuery) { engine, _ -> engine.search(cleanQuery) }
+    }
+
+    fun summarizeCurrentChapter() {
+        runIntelligence { engine, chunkIndex -> engine.summarizeChapter(chunkIndex) }
+    }
+
+    fun explainCurrentChunk() {
+        runIntelligence { engine, chunkIndex -> engine.explain(chunkIndex) }
+    }
+
+    fun openAssistantSource(chunkIndex: Int) {
+        val book = uiState.value.book ?: return
+        if (chunkIndex !in book.chunks.indices) return
+        if (uiState.value.playback.status in setOf(PlaybackStatus.PLAYING, PlaybackStatus.PREPARING)) pause()
+        ReadingSession.setIndex(chunkIndex)
+        preferences.savePosition(book.uri, chunkIndex)
+        mutableUiState.update { it.copy(assistant = it.assistant.copy(isOpen = false)) }
+    }
+
+    private fun runIntelligence(
+        query: String = uiState.value.assistant.query,
+        action: (BookIntelligence, Int) -> BookInsight,
+    ) {
+        val book = uiState.value.book ?: return
+        intelligenceJob?.cancel()
+        mutableUiState.update {
+            it.copy(assistant = it.assistant.copy(isOpen = true, isWorking = true, query = query))
+        }
+        intelligenceJob = viewModelScope.launch(Dispatchers.Default) {
+            val key = "${book.uri}:${book.chunks.size}:${book.chunks.hashCode()}"
+            val engine = bookIntelligence?.takeIf { it.first == key }?.second
+                ?: BookIntelligence(book).also { bookIntelligence = key to it }
+            val insight = action(engine, ReadingSession.state.value.currentChunkIndex)
+            mutableUiState.update { state ->
+                if (state.book?.uri != book.uri) state else state.copy(
+                    assistant = state.assistant.copy(
+                        isOpen = true,
+                        isWorking = false,
+                        result = insight.toUiResult(),
+                    ),
+                )
+            }
+        }
+    }
+
+    private fun BookInsight.toUiResult() = AssistantResult(
+        title = title,
+        body = body,
+        sources = sources.map { AssistantSource(it.chunkIndex, it.pageNumber, it.excerpt) },
+    )
+
     fun refreshVoices(force: Boolean = false) {
         val now = SystemClock.elapsedRealtime()
         if (!force && now - lastVoiceRefreshAt < VOICE_REFRESH_INTERVAL_MILLIS) return
@@ -188,6 +263,8 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         val requestToken = loadRequests.begin()
         loadJob?.cancel()
         ocrJob?.cancel()
+        intelligenceJob?.cancel()
+        bookIntelligence = null
         if (ReadingSession.state.value.status != PlaybackStatus.STOPPED) {
             ReadingService.stop(getApplication())
         }
@@ -202,6 +279,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
                 isOcrRunning = false,
                 ocrMessage = "",
                 error = null,
+                assistant = it.assistant.copy(isOpen = false, isWorking = false, result = null),
             )
         }
 
@@ -274,6 +352,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun startProgressiveOcr(initialBook: BookContent, priorityPage: Int) {
         ocrJob?.cancel()
+        intelligenceJob?.cancel()
         if (initialBook.pagesWithoutText <= 0 || initialBook.pageCount <= 0) {
             mutableUiState.update { it.copy(isOcrRunning = false, ocrMessage = "") }
             return
@@ -424,6 +503,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         loadRequests.invalidate()
         loadJob?.cancel()
         ocrJob?.cancel()
+        intelligenceJob?.cancel()
         lastRenderedPage = -1
         mutableUiState.update { state ->
             state.copy(
@@ -488,6 +568,7 @@ class ReaderViewModel(application: Application) : AndroidViewModel(application) 
         loadJob?.cancel()
         renderJob?.cancel()
         ocrJob?.cancel()
+        intelligenceJob?.cancel()
         parser.close()
         voiceCatalog.close()
     }

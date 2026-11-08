@@ -114,6 +114,10 @@ class ArtifactIgnoringTextStripper : PDFTextStripper() {
                 isBold = currentPositions.isNotEmpty() &&
                     boldPositions * 2 >= currentPositions.size,
                 startsParagraph = currentLineStartsParagraph,
+                left = currentPositions.minOfOrNull(TextPosition::getXDirAdj) ?: 0f,
+                top = currentPositions.minOfOrNull(TextPosition::getYDirAdj) ?: 0f,
+                right = currentPositions.maxOfOrNull { it.xDirAdj + it.widthDirAdj } ?: 0f,
+                bottom = currentPositions.maxOfOrNull { it.yDirAdj + it.heightDir } ?: 0f,
             )
         }
         currentLine.clear()
@@ -135,4 +139,8 @@ data class PdfTextLine(
     val fontSizePt: Float,
     val isBold: Boolean,
     val startsParagraph: Boolean,
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
 )

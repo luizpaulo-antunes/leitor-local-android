@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,6 +41,7 @@ import com.leitorlocal.ReaderViewModel
 import com.leitorlocal.ui.library.LibraryContent
 import com.leitorlocal.ui.library.WelcomeContent
 import com.leitorlocal.ui.reader.ReaderContent
+import com.leitorlocal.ui.reader.BookAssistantDialog
 import com.leitorlocal.ui.theme.ReaderTheme
 
 @Composable
@@ -63,6 +65,7 @@ fun LeitorLocalApp(
                     openButtonLabel = if (state.showingLibrary) "Adicionar PDF" else "Outro PDF",
                     onShowLibrary = viewModel::showLibrary,
                     onOpenPdf = onOpenPdf,
+                    onOpenAssistant = viewModel::openAssistant,
                 )
             },
         ) { padding ->
@@ -88,6 +91,15 @@ fun LeitorLocalApp(
                     else -> WelcomeContent(onOpenPdf)
                 }
 
+                BookAssistantDialog(
+                    state = state.assistant,
+                    onDismiss = viewModel::closeAssistant,
+                    onSearch = viewModel::searchBook,
+                    onSummarize = viewModel::summarizeCurrentChapter,
+                    onExplain = viewModel::explainCurrentChunk,
+                    onSourceSelected = viewModel::openAssistantSource,
+                )
+
                 if (state.isLoading) LoadingOverlay(state.loadingMessage)
 
                 (state.error ?: state.playback.error)?.let { message ->
@@ -110,6 +122,7 @@ private fun ReaderTopBar(
     openButtonLabel: String,
     onShowLibrary: () -> Unit,
     onOpenPdf: () -> Unit,
+    onOpenAssistant: () -> Unit,
 ) {
     TopAppBar(
         title = {
@@ -133,6 +146,14 @@ private fun ReaderTopBar(
             }
         },
         actions = {
+            if (showLibraryButton) {
+                IconButton(onClick = onOpenAssistant) {
+                    Icon(
+                        imageVector = Icons.Default.Search,
+                        contentDescription = "Buscar e entender o livro",
+                    )
+                }
+            }
             IconButton(onClick = onOpenPdf) {
                 Icon(
                     imageVector = Icons.Default.Add,
